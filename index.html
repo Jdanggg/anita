@@ -609,6 +609,22 @@
     <input type="range" id="rate" min="0.6" max="1.6" step="0.05" value="1.0">
   </div>
   <div class="field">
+    <label>Premium voice (ElevenLabs)</label>
+    <label class="chk"><input type="checkbox" id="elOnChk"> use a real human-sounding voice instead of the device one</label>
+    <input type="password" id="elKey" placeholder="ElevenLabs API key" autocomplete="off" style="margin-top:8px">
+    <div class="voicerow" style="margin-top:8px">
+      <select id="elVoice"></select>
+      <button class="minibtn" id="elLoad" title="Fetch the voices on your account">LOAD</button>
+      <button class="minibtn" id="elTest" title="Hear this voice">▶ TEST</button>
+    </div>
+    <select id="elModel" style="margin-top:8px">
+      <option value="eleven_turbo_v2_5">Turbo — fast and cheap (best for chat)</option>
+      <option value="eleven_flash_v2_5">Flash — fastest, lowest latency</option>
+      <option value="eleven_multilingual_v2">Multilingual v2 — richest, slower and pricier</option>
+    </select>
+    <div class="hint" id="elHint">Get a key at elevenlabs.io → Profile → API Keys. Press LOAD to list your voices. Works on the phone too, and sounds identical on both. If it ever fails she falls back to the device voice on her own.</div>
+  </div>
+  <div class="field">
     <label>Voice pitch: <span id="pitchVal">1.05</span></label>
     <input type="range" id="pitch" min="0.7" max="1.5" step="0.05" value="1.05">
     <div class="hint">Lifts her pitch without changing voice. <b>Aria ★ at 1.15</b> is the sweet spot. Above ~1.3 she starts to sound childish. Pick a voice, drag, press ▶ TEST.</div>
@@ -759,6 +775,14 @@
     setRate:   function (v) { localStorage.setItem('friday_rate', String(v)); },
     getPitch:  function () { return parseFloat(localStorage.getItem('friday_pitch') || '1.05'); },
     setPitch:  function (v) { localStorage.setItem('friday_pitch', String(v)); },
+    getElOn:    function () { return localStorage.getItem('friday_el_on') === '1'; },
+    setElOn:    function (v) { localStorage.setItem('friday_el_on', v ? '1' : '0'); },
+    getElKey:   function () { return localStorage.getItem('friday_el_key') || ''; },
+    setElKey:   function (v) { localStorage.setItem('friday_el_key', v); },
+    getElVoice: function () { return localStorage.getItem('friday_el_voice') || ''; },
+    setElVoice: function (v) { localStorage.setItem('friday_el_voice', v); },
+    getElModel: function () { return localStorage.getItem('friday_el_model') || 'eleven_turbo_v2_5'; },
+    setElModel: function (v) { localStorage.setItem('friday_el_model', v); },
     getSys:    function () { return localStorage.getItem('friday_sys') || DEFAULT_SYSTEM; },
     setSys:    function (v) { localStorage.setItem('friday_sys', v); },
     getCity:   function () { return localStorage.getItem('friday_city') || ''; },
@@ -2880,6 +2904,60 @@
   function cleanForSpeech(t) {
     return t.replace(/[*_#`~]/g, '').replace(/\s+/g, ' ').trim();
   }
+  // ---------- premium voice (ElevenLabs) ----------
+  // Device speech is free but uneven: iOS hides its good voices behind a download and
+  // Edge's neural ones come and go. This sounds the same on every device.
+  var elAudio = null;            // the <audio> currently playing, so stop can kill it
+  var elWarned = false;          // only nag once per session if it fails
+
+  function elReady() { return store.getElOn() && !!store.getElKey() && !!store.getElVoice(); }
+
+  function elFallback(msg) {
+    if (!elWarned) {
+      elWarned = true;
+      addMsg('sys', 'Premium voice unavailable (' + msg + ') — using the device voice for now.');
+    }
+  }
+
+  // Speak one line. Resolves true if it played, false to let the caller fall back.
+  function elSpeak(text) {
+    var key = store.getElKey(), voice = store.getElVoice();
+    var url = 'https://api.elevenlabs.io/v1/text-to-speech/' + encodeURIComponent(voice) +
+              '/stream?optimize_streaming_latency=3&output_format=mp3_44100_128';
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'xi-api-key': key, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+      body: JSON.stringify({
+        text: text,
+        model_id: store.getElModel(),
+        voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true }
+      })
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          var why = r.status === 401 ? 'bad API key'
+                  : r.status === 429 ? 'rate limited or out of credits'
+                  : ('HTTP ' + r.status);
+          throw new Error(why + (t && t.length < 200 ? ' — ' + t : ''));
+        });
+      }
+      return r.blob();
+    }).then(function (blob) {
+      return new Promise(function (resolve) {
+        var src = URL.createObjectURL(blob);
+        var a = new Audio(src);
+        elAudio = a;
+        a.playbackRate = Math.min(1.6, Math.max(0.7, store.getRate()));
+        a.onended = function () { URL.revokeObjectURL(src); elAudio = null; resolve(true); };
+        a.onerror = function () { URL.revokeObjectURL(src); elAudio = null; resolve(false); };
+        a.play().catch(function () { URL.revokeObjectURL(src); elAudio = null; resolve(false); });
+      });
+    }).catch(function (e) {
+      elFallback(String(e.message || e));
+      return false;
+    });
+  }
+
   function updStopBtn() {
     if ($('stopBtn')) $('stopBtn').style.display = speaking ? '' : 'none';
   }
@@ -2903,20 +2981,34 @@
     speaking = true;
     updStopBtn();
     setState('speaking');
-    var u = new SpeechSynthesisUtterance(speechQueue.shift());
-    var v = pickVoice();
-    if (v) u.voice = v;
-    u.rate = store.getRate();
-    u.pitch = store.getPitch();
-    u.onend = speakNext;
-    u.onerror = speakNext;
-    synth.speak(u);
+    var line = speechQueue.shift();
+
+    function deviceSay() {
+      var u = new SpeechSynthesisUtterance(line);
+      var v = pickVoice();
+      if (v) u.voice = v;
+      u.rate = store.getRate();
+      u.pitch = store.getPitch();
+      u.onend = speakNext;
+      u.onerror = speakNext;
+      synth.speak(u);
+    }
+
+    if (elReady()) {
+      elSpeak(line).then(function (played) {
+        if (!speaking) return;               // stopped mid-flight
+        if (played) speakNext(); else deviceSay();
+      });
+      return;
+    }
+    deviceSay();
   }
   function stopSpeaking() {
     speechQueue.length = 0;
     speaking = false;
     updStopBtn();
     if (synth) synth.cancel();
+    if (elAudio) { try { elAudio.pause(); elAudio.src = ''; } catch (e) {} elAudio = null; }
   }
   function runGoodnight() {
     goodnightArmed = false;
@@ -3523,6 +3615,49 @@
   $('rate').oninput = function (e) { $('rateVal').textContent = (+e.target.value).toFixed(2); };
   if ($('pitch')) $('pitch').oninput = function (e) { $('pitchVal').textContent = (+e.target.value).toFixed(2); };
   if ($('voiceAll')) $('voiceAll').onchange = loadVoices;
+  if ($('elLoad')) $('elLoad').onclick = function () {
+    var key = $('elKey').value.trim();
+    if (!key) { $('elHint').textContent = 'Paste your ElevenLabs API key first.'; return; }
+    $('elHint').textContent = 'Loading voices…';
+    fetch('https://api.elevenlabs.io/v1/voices', { headers: { 'xi-api-key': key } })
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.status === 401 ? 'that key was rejected' : 'HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (j) {
+        var list = (j && j.voices) || [];
+        var sel = $('elVoice');
+        sel.innerHTML = '';
+        list.forEach(function (v) {
+          var o = document.createElement('option');
+          o.value = v.voice_id;
+          var bits = [];
+          if (v.labels) { ['gender', 'accent', 'age', 'use_case', 'description'].forEach(function (k) { if (v.labels[k]) bits.push(v.labels[k]); }); }
+          o.textContent = v.name + (bits.length ? '  (' + bits.slice(0, 3).join(', ') + ')' : '');
+          if (v.voice_id === store.getElVoice()) o.selected = true;
+          sel.appendChild(o);
+        });
+        $('elHint').textContent = list.length + ' voices loaded. Pick one, press ▶ TEST, then APPLY.';
+      })
+      .catch(function (e) { $('elHint').textContent = 'Could not load voices: ' + (e.message || e); });
+  };
+  if ($('elVoice')) $('elVoice').onchange = function () {
+    var opt = this.options[this.selectedIndex];
+    if (opt) localStorage.setItem('friday_el_voice_name', opt.textContent);
+  };
+  if ($('elTest')) $('elTest').onclick = function () {
+    var key = $('elKey').value.trim(), voice = $('elVoice').value;
+    if (!key || !voice) { $('elHint').textContent = 'Need a key and a selected voice.'; return; }
+    $('elHint').textContent = 'Speaking…';
+    var saveK = store.getElKey(), saveV = store.getElVoice(), saveM = store.getElModel(), saveOn = store.getElOn();
+    store.setElKey(key); store.setElVoice(voice); store.setElModel($('elModel').value); store.setElOn(true);
+    elWarned = true;                                  // don't post a chat warning from a test
+    elSpeak('Hello sir. This is how I sound now. Shall we get to work?').then(function (ok) {
+      $('elHint').textContent = ok ? 'That is the voice you will get.' : 'It did not play — check the key, the voice, and your credits.';
+      elWarned = false;
+      if (!saveOn) { store.setElKey(saveK); store.setElVoice(saveV); store.setElModel(saveM); store.setElOn(saveOn); }
+    });
+  };
   if ($('voiceTest')) $('voiceTest').onclick = function () {
     if (!synth) return;
     synth.cancel();
@@ -3561,6 +3696,10 @@
     if ($('themeSel')) { store.setTheme($('themeSel').value); applyTheme(); }
     store.setRate(parseFloat($('rate').value));
     if ($('pitch')) store.setPitch(parseFloat($('pitch').value));
+    if ($('elOnChk')) store.setElOn($('elOnChk').checked);
+    if ($('elKey')) store.setElKey($('elKey').value.trim());
+    if ($('elVoice') && $('elVoice').value) store.setElVoice($('elVoice').value);
+    if ($('elModel')) store.setElModel($('elModel').value);
     store.setSys($('sysPrompt').value.trim() || DEFAULT_SYSTEM);
     store.setCity($('homeCity').value.trim());
     store.setTgTok($('tgToken').value.trim());
@@ -3590,6 +3729,16 @@
   $('rate').value = store.getRate();
   $('rateVal').textContent = store.getRate().toFixed(2);
   if ($('pitch')) { $('pitch').value = store.getPitch(); $('pitchVal').textContent = store.getPitch().toFixed(2); }
+  if ($('elOnChk')) $('elOnChk').checked = store.getElOn();
+  if ($('elKey')) $('elKey').value = store.getElKey();
+  if ($('elModel')) $('elModel').value = store.getElModel();
+  if ($('elVoice') && store.getElVoice()) {
+    var o = document.createElement('option');
+    o.value = store.getElVoice();
+    o.textContent = localStorage.getItem('friday_el_voice_name') || 'saved voice';
+    o.selected = true;
+    $('elVoice').appendChild(o);
+  }
   (function () {   // one-time: carry the rename into a previously saved personality
     var s0 = store.getSys();
     var s1 = s0.replace(/\bF\.?R\.?I\.?D\.?A\.?Y\.?\b/g, 'Anita');
