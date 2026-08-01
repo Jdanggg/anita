@@ -586,7 +586,7 @@
       <button class="minibtn" id="voiceTest" title="Preview this voice">▶ TEST</button>
     </div>
     <label class="chk"><input type="checkbox" id="voiceAll"> show all voices</label>
-    <div class="hint">★ voices are Edge’s neural “Natural” voices — by far the best quality.</div>
+    <div class="hint">★ = high quality. On Windows those are Edge’s “Natural” voices. <b>On iPhone you must download them first:</b> Settings → Accessibility → Spoken Content → Voices → English — get <b>Ava (Premium)</b>, <b>Zoe (Premium)</b> or <b>Samantha (Enhanced)</b>, then reopen this app and they appear here.</div>
   </div>
   <div class="field">
     <label>Theme</label>
@@ -2766,7 +2766,16 @@
 
   // ---------- Text-to-speech ----------
   var synth = window.speechSynthesis || null;
-  var FEMALE_PREFS = ['aria', 'jenny', 'michelle', 'ava', 'emma', 'sonia', 'libby', 'natasha', 'zira', 'google us english', 'google uk english female', 'samantha', 'female'];   // no 'ana'/'maisie': those are child voices
+  // Windows/Edge names first, then Apple's - one list, ranked best-first.
+  // No 'ana'/'maisie': those are child voices.
+  var FEMALE_PREFS = [
+    'aria', 'jenny', 'michelle', 'emma', 'sonia', 'libby', 'natasha',            // Edge neural
+    'ava', 'allison', 'samantha', 'susan', 'zoe', 'nicky', 'joelle', 'karen',    // Apple, best first
+    'serena', 'moira', 'tessa', 'fiona', 'catherine', 'martha',                  // Apple, regional
+    'zira', 'google us english', 'google uk english female', 'female'
+  ];
+  // Apple's legacy Eloquence set: novelty robot voices that must never win by default.
+  var NOVELTY_VOICES = /(grandma|grandpa|rocko|shelley|sandy|flo|eddy|reed|bells|bubbles|boing|bahh|jester|organ|cellos|trinoids|whisper|wobble|zarvox|good news|bad news|superstar|junior|ralph|albert|fred|kathy|princess|deranged|hysterical|bruce|agnes|vicki|victoria)/;
   var voices = [];
 
   function voiceScore(v) {
@@ -2776,7 +2785,12 @@
       if (n.indexOf(FEMALE_PREFS[i]) !== -1) { score = i; break; }
     }
     if (score < 0) score = 999;
-    if (n.indexOf('natural') !== -1 || n.indexOf('online') !== -1) score -= 0.5;
+    // Quality tiers. Edge calls its good ones Natural/Online; Apple calls downloaded
+    // high-quality voices Premium (best) or Enhanced.
+    if (n.indexOf('premium') !== -1) score -= 3;
+    else if (n.indexOf('enhanced') !== -1) score -= 2;
+    else if (n.indexOf('natural') !== -1 || n.indexOf('online') !== -1) score -= 0.5;
+    if (NOVELTY_VOICES.test(n)) score += 500;      // bottom of the list, always
     return score;
   }
   function loadVoices() {
@@ -2806,7 +2820,9 @@
         var opt = document.createElement('option');
         opt.value = list[i].name;
         var nm = list[i].name.replace(/^Microsoft /, '').replace(/ - .*$/, '');
-        opt.textContent = nm + '  (' + list[i].lang + ')' + (list[i].name.toLowerCase().indexOf('natural') !== -1 ? '  ★' : '');
+        var ln = list[i].name.toLowerCase();
+        var star = (ln.indexOf('natural') !== -1 || ln.indexOf('premium') !== -1 || ln.indexOf('enhanced') !== -1) ? '  ★' : '';
+        opt.textContent = nm + '  (' + list[i].lang + ')' + star;
         g.appendChild(opt);
       }
       sel.appendChild(g);
