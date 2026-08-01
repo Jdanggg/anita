@@ -2907,8 +2907,29 @@
   // ---------- premium voice (ElevenLabs) ----------
   // Device speech is free but uneven: iOS hides its good voices behind a download and
   // Edge's neural ones come and go. This sounds the same on every device.
-  var elAudio = null;            // the <audio> currently playing, so stop can kill it
+  // ONE audio element for her whole life. iOS only lets audio start from inside a user
+  // gesture; once this element has played during a real tap it may be replayed
+  // programmatically forever, which is what makes her speak hands-free on a phone.
+  var elAudio = new Audio();
+  elAudio.preload = 'auto';
+  var elUnlocked = false;
   var elWarned = false;          // only nag once per session if it fails
+
+  function elUnlock() {
+    if (elUnlocked) return;
+    elUnlocked = true;
+    try {
+      // a few milliseconds of silence, played during the tap that called us
+      elAudio.src = 'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA//tAwAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAACAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDA//////////////////////////8AAAAATGF2YzU4LjU0AAAAAAAAAAAAAAAAJAAAAAAAAAAAASDs90hvAAAAAAAAAAAAAAAAAAAA//sQxAADwAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==';
+      elAudio.volume = 0;
+      var pr = elAudio.play();
+      if (pr && pr.then) pr.then(function () { elAudio.pause(); elAudio.volume = 1; }).catch(function () { elAudio.volume = 1; });
+      else { elAudio.pause(); elAudio.volume = 1; }
+    } catch (e) { elAudio.volume = 1; }
+  }
+  // Any tap or click counts - the composer buttons, the seal, a Config button.
+  document.addEventListener('touchend', elUnlock, { passive: true });
+  document.addEventListener('click', elUnlock);
 
   function elReady() { return store.getElOn() && !!store.getElKey() && !!store.getElVoice(); }
 
@@ -2919,7 +2940,8 @@
     }
   }
 
-  // Speak one line. Resolves true if it played, false to let the caller fall back.
+  // Speak one line. Resolves { ok, reason } - the reason matters, because "no sound"
+  // has three very different causes and the user cannot tell them apart.
   function elSpeak(text) {
     var key = store.getElKey(), voice = store.getElVoice();
     var url = 'https://api.elevenlabs.io/v1/text-to-speech/' + encodeURIComponent(voice) +
@@ -2945,16 +2967,25 @@
     }).then(function (blob) {
       return new Promise(function (resolve) {
         var src = URL.createObjectURL(blob);
-        var a = new Audio(src);
-        elAudio = a;
-        a.playbackRate = Math.min(1.6, Math.max(0.7, store.getRate()));
-        a.onended = function () { URL.revokeObjectURL(src); elAudio = null; resolve(true); };
-        a.onerror = function () { URL.revokeObjectURL(src); elAudio = null; resolve(false); };
-        a.play().catch(function () { URL.revokeObjectURL(src); elAudio = null; resolve(false); });
+        elAudio.src = src;
+        elAudio.playbackRate = Math.min(1.6, Math.max(0.7, store.getRate()));
+        elAudio.onended = function () { URL.revokeObjectURL(src); resolve({ ok: true }); };
+        elAudio.onerror = function () { URL.revokeObjectURL(src); resolve({ ok: false, reason: 'the audio could not be decoded' }); };
+        var pr = elAudio.play();
+        if (pr && pr.catch) {
+          pr.catch(function (e) {
+            URL.revokeObjectURL(src);
+            var blocked = e && (e.name === 'NotAllowedError' || /gesture|user activation|interact/i.test(String(e.message || '')));
+            resolve({ ok: false, reason: blocked
+              ? 'the browser blocked playback \u2014 tap anywhere in the app once, then try again'
+              : 'playback failed: ' + (e.message || e) });
+          });
+        }
       });
     }).catch(function (e) {
-      elFallback(String(e.message || e));
-      return false;
+      var why = String(e.message || e);
+      elFallback(why);
+      return { ok: false, reason: why };
     });
   }
 
@@ -2995,9 +3026,9 @@
     }
 
     if (elReady()) {
-      elSpeak(line).then(function (played) {
+      elSpeak(line).then(function (res) {
         if (!speaking) return;               // stopped mid-flight
-        if (played) speakNext(); else deviceSay();
+        if (res && res.ok) speakNext(); else deviceSay();
       });
       return;
     }
@@ -3008,7 +3039,7 @@
     speaking = false;
     updStopBtn();
     if (synth) synth.cancel();
-    if (elAudio) { try { elAudio.pause(); elAudio.src = ''; } catch (e) {} elAudio = null; }
+    try { elAudio.pause(); elAudio.currentTime = 0; } catch (e) {}
   }
   function runGoodnight() {
     goodnightArmed = false;
@@ -3652,8 +3683,11 @@
     var saveK = store.getElKey(), saveV = store.getElVoice(), saveM = store.getElModel(), saveOn = store.getElOn();
     store.setElKey(key); store.setElVoice(voice); store.setElModel($('elModel').value); store.setElOn(true);
     elWarned = true;                                  // don't post a chat warning from a test
-    elSpeak('Hello sir. This is how I sound now. Shall we get to work?').then(function (ok) {
-      $('elHint').textContent = ok ? 'That is the voice you will get.' : 'It did not play — check the key, the voice, and your credits.';
+    elUnlock();                                       // we are inside a real tap right now
+    elSpeak('Hello sir. This is how I sound now. Shall we get to work?').then(function (res) {
+      $('elHint').textContent = (res && res.ok)
+        ? 'That is the voice you will get. Press APPLY to keep it.'
+        : 'Did not play \u2014 ' + ((res && res.reason) || 'unknown reason') + '.';
       elWarned = false;
       if (!saveOn) { store.setElKey(saveK); store.setElVoice(saveV); store.setElModel(saveM); store.setElOn(saveOn); }
     });
