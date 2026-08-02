@@ -817,7 +817,10 @@
     setWake:  function (v) { localStorage.setItem('friday_wake', v ? '1' : '0'); },
     getDevice: function () { return localStorage.getItem('friday_device') || ''; },
     setDevice: function (v) { localStorage.setItem('friday_device', v); },
-    getTgOwner: function () { return localStorage.getItem('friday_tg_owner') !== '0'; },
+    // Default: a PC holds the phone line, the phone does not. Telegram has ONE inbox, so
+    // if the phone polled it too it would swallow the messages Johnny sends from that very
+    // phone, and the PC - which has all the real tools - would never see them.
+    getTgOwner: function () { var v = localStorage.getItem('friday_tg_owner'); return v === null ? DESKTOP : v === '1'; },
     setTgOwner: function (v) { localStorage.setItem('friday_tg_owner', v ? '1' : '0'); },
     getTheme: function () { return localStorage.getItem('friday_theme') || 'kyoto'; },
     setTheme: function (v) { localStorage.setItem('friday_theme', v); },
@@ -3407,7 +3410,7 @@
   // Telegram's getUpdates is ONE shared queue: if two machines poll it they consume each
   // other's messages. Exactly one instance owns the phone line; the others stay silent
   // and receive work through the fleet bus instead.
-  function tgIsOwner() { return !DESKTOP ? true : store.getTgOwner(); }
+  function tgIsOwner() { return store.getTgOwner(); }
   // "Laptop: run the refresh" / "@Laptop run the refresh" -> hand it to that machine.
   function tgRouteIfAddressed(text) {
     if (!DESKTOP) return Promise.resolve(false);
