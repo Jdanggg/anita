@@ -13,7 +13,7 @@
 <meta name="theme-color" content="#ec7f4b">
 <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAACgklEQVR4nOVbMVLDMBDU3WRIFQq6fIGCgicw9DR8Ah4EJW+gZ3hCCgq+kI6CVEkTxoVnMh7bOp12FRttlcTK3e3qzpZkSUIh7LebY0r75fpWQgHIVAifSxCZOnG2EDIX4iwhZG7E0ULIXImjhND/QD4nJinlqMHF74ep3eHyvlgmCJu4lTRaDKsQwiCfSxolhkUEQZJnEc8RIiaCBhBKkUf7EkTvJwX09T1+/eYangljWSA55M3EY6QzxbAIMSSC0Mh7STvF8IqgnliKkzfY9N4XFD7KY5AH2e7jJpZGJqWZxBNKIlYK3TLQWZIf8RkrhS7HBf3Z+/j22v1p9/zw1Nd0dXcVEGhitT4ihdr7PeRjIiSLkVkKavGBJt9g9fI+en33+UMthRbqvvMXqPtGBJMQjlhazhoYiPS+NQuSs8EBndIkBw1L7OqyfIbHXjQLnDEpen2Pma5o2/vt5qiM9I894lLb5SDGQZMtnmPUR4xNWSka611v76PLQAMRQyRLpL4VC7aDKZEtngFzgIbKoaFyKNIYaj5f0ocm/yNh3b44HLEp6y3tVBDjoOg9N8wyQNterm9FGanGECFq01maGmsw5zKwxK4s58gsYJaVtB/G1gVy3wd4JzDMleGkVeHDkCFj3Xl6kL0s3kJOv7iywDEPH8qIZKFGOsDS+0mzwcYgaoGUPWJMuXHr6ZfYmCC3FKb4clTgmyPYS2bOtDe9HW6QPTJkZkOmbdgOkUNMaYYIgC0yfZChC1VvkmpR9TY5qggAIMhD5wIlJ01IX2JpVPVm6RZVb5c/RbUHJqZ+ZMY7iNNSjtjwxiS5jqs9NtdFtQcnu6j26GwX1R6eDgOY6vH5P+UfcWF1xBaDAAAAAElFTkSuQmCC">
 <style>
-  /* SOLSTICE — a living theme. All colors are variables driven by fridayview.js,
+  /* SOLSTICE — a living theme. All colors are variables driven by anitaview.js,
      which interpolates them through the day (real sunrise/sunset) and tints them
      by current weather. Defaults below = mid-morning, clear. */
   :root {
@@ -481,60 +481,130 @@
      dragging her back restores the normal layout. A column cannot work at 480px tall - the
      orb alone is 180px - so everything stacks to the left and the transcript takes the rest. */
   @media (min-aspect-ratio: 5/2) and (max-height: 760px) {
+    /* THE RAIL IS OUT OF FLOW. body is a row here, so leaving these as flex siblings gave each
+       one its own column - which is what squashed the glance panel into a strip of icons.
+       Fixed offsets inside a reserved 300px strip cannot collapse like that. */
+    --rail: 300px;
+
     body { flex-direction: row; align-items: stretch; }
 
-    /* left rail: identity and controls, fixed width */
     header {
-      flex: 0 0 300px; max-width: 300px; flex-direction: column; align-items: flex-start;
-      justify-content: flex-start; gap: 10px; padding: 14px 8px 10px 20px; order: 1;
+      position: fixed; left: 20px; top: 12px; width: calc(var(--rail) - 34px);
+      flex-direction: column; align-items: flex-start; gap: 6px; padding: 0; z-index: 6;
     }
-    header h1 { font-size: 15px; letter-spacing: 3px; }
-    .hbtns { flex-wrap: wrap; }
+    header h1 { font-size: 14px; letter-spacing: 3px; }
+    .sub { font-size: 9px; letter-spacing: 2.5px; }
+
+    /* Clear/Config live top-RIGHT: the rail is the header's home, so left they sat on the orb. */
+    .hbtns { position: fixed; top: 10px; right: 14px; z-index: 12; flex-direction: row-reverse; gap: 7px; }
+    .hbtns .hfold { margin-left: 0; margin-right: -9px; }
+    .hbtns.open .hfold { margin-right: 0; }
     .hbtn { padding: 5px 12px; font-size: 11px; }
 
-    #orbWrap { order: 2; flex: 0 0 auto; width: 110px; height: 110px; margin: 0 0 0 22px; align-self: flex-start; }
-    #orbWrap .ring.thin { inset: -8px; }
-    #status  { order: 3; margin: 6px 0 0 22px; letter-spacing: 3px; font-size: 10px; align-self: flex-start; }
-    #vu      { order: 4; margin: 4px 0 0 22px; align-self: flex-start; }
+    #orbWrap {
+      position: fixed; left: 20px; top: 52px; width: 92px; height: 92px; margin: 0; z-index: 5;
+    }
+    #orbWrap .ring.thin { inset: -7px; }
+    #status {
+      position: fixed; left: 124px; top: 66px; width: calc(var(--rail) - 140px);
+      margin: 0; letter-spacing: 2.5px; font-size: 9.5px; text-align: left; z-index: 5;
+    }
+    #vu { position: fixed; left: 124px; top: 88px; margin: 0; z-index: 5; }
 
-    /* right side: transcript + composer, taking everything left over */
+    /* Everything below the orb is the glance rail - the reason for reclaiming the space. */
+    body #glance {
+      display: flex; position: fixed; left: 20px; top: 152px;
+      width: calc(var(--rail) - 34px); bottom: 12px;
+      flex-direction: column; gap: 6px; margin: 0;
+      overflow: hidden; font-size: 11.5px; color: var(--dim); z-index: 5;
+    }
+    #glance .g {
+      display: flex; gap: 8px; align-items: baseline; flex: 0 0 auto;
+      padding: 5px 9px; border-radius: 9px;
+      background: var(--surface); border: 1px solid var(--edge);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #glance .g b { color: var(--ink); font-weight: 700; font-size: 13px; }
+    #glance .g i { font-style: normal; opacity: .85; }
+    #glance .g.warn { border-color: var(--err); }
+    #glance .g.warn b { color: var(--err); }
+
+    /* right side: the transcript is the only thing left in flow */
     #chat {
-      order: 5; flex: 1 1 auto; max-width: none; width: auto;
-      padding: 12px 22px 4px; min-width: 0;
+      flex: 1 1 auto; max-width: none; width: auto; min-width: 0;
+      margin-left: var(--rail); padding: 12px 26px 74px 4px;
     }
-    .msg { max-width: 88%; font-size: 13.5px; padding: 7px 12px 8px; line-height: 1.4; }
-    #composer {
-      order: 6; position: absolute; bottom: 0; left: 300px; right: 0;
-      width: auto; max-width: none; padding: 6px 22px 10px;
-    }
-    #attachRow { position: absolute; bottom: 46px; left: 300px; padding: 0 22px; }
+    .msg { max-width: 84%; font-size: 13.5px; padding: 7px 12px 8px; line-height: 1.45; }
     .msg img.shot { max-width: 180px; }
 
-    /* The drawer sits BESIDE the transcript here rather than over it. At 372px on a
-       2560px monitor an overlay is a sliver; on a 1920px panel it buried his messages. */
+    /* Out of flow, so #chat reserves the height back via its padding-bottom. Generous because
+       zoom scales the composer too - at 130% it is half again as tall. */
+    #composer {
+      position: fixed; bottom: 0; left: var(--rail); right: 0;
+      width: auto; max-width: none; padding: 6px 22px 10px; z-index: 8;
+      background: linear-gradient(180deg, transparent, var(--sky-bot) 38%);
+    }
+    #attachRow { position: fixed; bottom: 52px; left: var(--rail); padding: 0 22px; z-index: 8; }
+
+    /* The drawer sits BESIDE the transcript rather than over it - as an overlay it buried his
+       own messages on a 1920px-wide panel. */
     #settings { width: 420px; right: -460px; }
-    body.cfgopen #chat,
-    body.cfgopen #composer,
-    body.cfgopen #attachRow { padding-right: 436px; }
-    body.cfgopen #composer,
-    body.cfgopen #attachRow { right: 0; }
+    body.cfgopen #chat { padding-right: 452px; }
+    body.cfgopen #composer, body.cfgopen #attachRow { right: 436px; }
     #gameDock { width: min(420px, 40vw); }
-    /* keep replies clear of the right edge so nothing hides under the drawer */
-    #chat { padding-right: 30px; }
   }
 
-  /* Very short indeed (the 480px panel): drop the header text, keep the controls. */
+  /* Very short indeed (the 480px panel): drop the title, tighten the rail. */
   @media (min-aspect-ratio: 7/2) and (max-height: 560px) {
-    header { flex: 0 0 250px; max-width: 250px; padding-top: 10px; }
     .brand { display: none; }
-    #orbWrap { width: 86px; height: 86px; }
-    #composer, #attachRow { left: 250px; }
-    #chat { padding-top: 8px; }
+    header { top: 10px; }
+    #orbWrap { top: 14px; width: 78px; height: 78px; }
+    #status { top: 26px; left: 110px; }
+    #vu { top: 46px; left: 110px; }
+    body #glance { top: 102px; }
     .msg { font-size: 13px; }
   }
 
   .cbtn.zoomb { padding: 0 9px; font-size: 12px; font-weight: 700; letter-spacing: 0; min-width: 34px; }
   #zoomVal { color: var(--dim); font-weight: 600; }
+
+  /* ===== composer buttons: icons, not boxes ===== */
+  #composer .cbtn {
+    background: none; border: none; box-shadow: none;
+    padding: 0 7px; font-size: 19px; line-height: 1; color: var(--dim);
+    filter: grayscale(.35) opacity(.75); transition: filter .18s, color .18s, transform .12s;
+  }
+  #composer .cbtn:hover { filter: none; color: var(--ink); transform: translateY(-1px); }
+  #composer .cbtn.active {
+    background: none; border: none; color: var(--accent);
+    filter: none; text-shadow: 0 0 14px var(--glow);
+  }
+  #composer .cbtn.zoomb {
+    font-size: 12.5px; font-weight: 700; letter-spacing: 0; min-width: 30px;
+    filter: none; opacity: .75;
+  }
+  #composer .cbtn.zoomb:hover { opacity: 1; }
+  #composer #zoomVal { font-size: 11px; font-weight: 600; min-width: 38px; }
+  #composer .cgap { width: 9px; display: inline-block; }
+
+  /* ===== the glance panel: only ever shown on a letterbox screen ===== */
+  #glance { display: none; }
+
+  /* Clear and Config collapse behind the dot */
+  .hbtns .hfold {
+    max-width: 0; padding-left: 0; padding-right: 0; margin-left: -9px;
+    opacity: 0; overflow: hidden; white-space: nowrap; pointer-events: none;
+    border-color: transparent; font-size: 15px; line-height: 1; letter-spacing: 0;
+    transition: max-width .22s ease, opacity .18s ease, padding .22s ease, margin .22s ease;
+  }
+  .hbtns.open .hfold {
+    max-width: 46px; padding-left: 12px; padding-right: 12px; margin-left: 0;
+    opacity: 1; pointer-events: auto; border-color: var(--edge);
+  }
+  .hbtns .hmore { padding: 7px 13px; font-size: 16px; line-height: 1; letter-spacing: 0; }
+  .hbtns.open .hmore { color: var(--accent); border-color: var(--accent); }
+  #glance .g[data-ask] { cursor: pointer; }
+  #glance .g[data-ask]:hover { border-color: var(--accent); }
 
   /* ================= phone ================= */
   @media (max-width: 820px) {
@@ -588,9 +658,12 @@
     <h1>Anita</h1>
     <div class="sub" id="subLine">POWERED BY CLAUDE</div>
   </div>
+  <!-- Occasional actions, so they hide behind one dot instead of sitting there permanently.
+       On the panel that hands their space back to the glance rail. -->
   <div class="hbtns">
-    <button class="hbtn" id="clearBtn" title="Clear conversation">Clear</button>
-    <button class="hbtn" id="settingsBtn" title="Settings">⚙ Config</button>
+    <button class="hbtn hmore" id="moreBtn" title="More">⋯</button>
+    <button class="hbtn hfold" id="clearBtn" title="Clear conversation">🧹</button>
+    <button class="hbtn hfold" id="settingsBtn" title="Settings">⚙</button>
   </div>
 </header>
 
@@ -605,20 +678,26 @@
 
 <div id="chat"></div>
 
+<div id="glance"></div>
 <div id="attachRow"></div>
 <div id="composer">
   <input id="textIn" type="text" placeholder="Ask anything — or paste a screenshot, or press Space to talk…" autocomplete="off">
   <input id="fileIn" type="file" accept="image/*" multiple style="display:none">
-  <button class="cbtn" id="clipBtn" title="Attach an image">📎</button>
-  <button class="cbtn zoomb" id="zoomOut" title="Smaller text (Ctrl and minus)">A&minus;</button>
-  <button class="cbtn zoomb" id="zoomVal" title="Text size — tap to reset to 100%">100%</button>
-  <button class="cbtn zoomb" id="zoomIn" title="Bigger text (Ctrl and plus)">A+</button>
+  <!-- Ordered by how often they are reached for: talk, then stop, then attach, then the
+       toggles, then the rarely-touched utilities. Icons only - the words used to spill out
+       of the pills, and a label adds nothing a tooltip cannot say. -->
   <button class="cbtn" id="micBtn" title="Talk (Space)">🎙</button>
-  <button class="cbtn" id="stopBtn" title="Stop her talking" style="display:none; color: var(--err); font-size: 16px; padding: 0 14px">⏹</button>
-  <button class="cbtn" id="muteBtn" title="Turn off her voice (meetings)">🔈 Voice</button>
+  <button class="cbtn" id="stopBtn" title="Stop her talking" style="display:none; color: var(--err)">⏹</button>
+  <button class="cbtn" id="clipBtn" title="Attach an image">📎</button>
+  <span class="cgap"></span>
+  <button class="cbtn" id="muteBtn" title="Turn off her voice (meetings)">🔊</button>
+  <button class="cbtn" id="wakeBtn" title="Wake word — say “Anita” to summon her hands-free">👂</button>
+  <button class="cbtn" id="autoBtn" title="Auto-listen: keep the conversation going hands-free">↻</button>
   <button class="cbtn" id="screenBtn" title="Share your screen with Anita">🖥</button>
-  <button class="cbtn" id="autoBtn" title="Auto-listen: keep the conversation going hands-free">↻ Auto</button>
-  <button class="cbtn" id="wakeBtn" title="Wake word — say “Anita” to summon her hands-free">👂 Wake</button>
+  <span class="cgap"></span>
+  <button class="cbtn zoomb" id="zoomOut" title="Smaller text (Ctrl and minus)">A&minus;</button>
+  <button class="cbtn zoomb" id="zoomVal" title="Text size — tap to reset for this screen">100%</button>
+  <button class="cbtn zoomb" id="zoomIn" title="Bigger text (Ctrl and plus)">A+</button>
 </div>
 
 <div id="spPlayer">
@@ -856,70 +935,89 @@
   };
 
   // ---------- config ----------
+  // ---------- one-time key migration: friday_* -> anita_* ----------
+  // Runs before anything reads a setting. Copies any legacy key that has no new counterpart,
+  // then removes it - otherwise the settings mirror posts a full localStorage snapshot and
+  // writes the old names back into the file forever.
+  (function () {
+    try {
+      var legacy = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf('friday_') === 0) legacy.push(k);
+      }
+      for (var j = 0; j < legacy.length; j++) {
+        var oldK = legacy[j], newK = 'anita_' + oldK.slice(7);
+        if (localStorage.getItem(newK) === null) localStorage.setItem(newK, localStorage.getItem(oldK));
+        localStorage.removeItem(oldK);
+      }
+    } catch (e) {}
+  })();
+
   var store = {
-    getKey:    function () { return localStorage.getItem('friday_key') || ''; },
-    setKey:    function (v) { localStorage.setItem('friday_key', v); },
-    getVoice:  function () { return localStorage.getItem('friday_voice') || ''; },
-    setVoice:  function (v) { localStorage.setItem('friday_voice', v); },
-    getRate:   function () { return parseFloat(localStorage.getItem('friday_rate') || '1'); },
-    setRate:   function (v) { localStorage.setItem('friday_rate', String(v)); },
-    getPitch:  function () { return parseFloat(localStorage.getItem('friday_pitch') || '1.05'); },
-    setPitch:  function (v) { localStorage.setItem('friday_pitch', String(v)); },
-    getElOn:    function () { return localStorage.getItem('friday_el_on') === '1'; },
-    setElOn:    function (v) { localStorage.setItem('friday_el_on', v ? '1' : '0'); },
-    getElKey:   function () { return localStorage.getItem('friday_el_key') || ''; },
-    setElKey:   function (v) { localStorage.setItem('friday_el_key', v); },
-    getElVoice: function () { return localStorage.getItem('friday_el_voice') || ''; },
-    setElVoice: function (v) { localStorage.setItem('friday_el_voice', v); },
-    getElModel: function () { return localStorage.getItem('friday_el_model') || 'eleven_turbo_v2_5'; },
-    setElModel: function (v) { localStorage.setItem('friday_el_model', v); },
-    getSttOn:  function () { return localStorage.getItem('friday_stt_on') === '1'; },
-    setSttOn:  function (v) { localStorage.setItem('friday_stt_on', v ? '1' : '0'); },
-    getVolume: function () { var v = parseFloat(localStorage.getItem('friday_volume')); return isNaN(v) ? 1 : v; },
-    setVolume: function (v) { localStorage.setItem('friday_volume', String(v)); },
-    getMute:   function () { return localStorage.getItem('friday_mute') === '1'; },
-    setMute:   function (v) { localStorage.setItem('friday_mute', v ? '1' : '0'); },
-    getSys:    function () { return localStorage.getItem('friday_sys') || DEFAULT_SYSTEM; },
-    setSys:    function (v) { localStorage.setItem('friday_sys', v); },
-    getCity:   function () { return localStorage.getItem('friday_city') || ''; },
-    setCity:   function (v) { localStorage.setItem('friday_city', v); },
-    getTgTok:  function () { return localStorage.getItem('friday_tg_token') || ''; },
-    setTgTok:  function (v) { localStorage.setItem('friday_tg_token', v); },
-    getTgChat: function () { return localStorage.getItem('friday_tg_chat') || ''; },
-    setTgChat: function (v) { localStorage.setItem('friday_tg_chat', v); },
-    getIcUser: function () { return localStorage.getItem('friday_ic_user') || ''; },
-    setIcUser: function (v) { localStorage.setItem('friday_ic_user', v); },
-    getIcPass: function () { return localStorage.getItem('friday_ic_pass') || ''; },
-    setIcPass: function (v) { localStorage.setItem('friday_ic_pass', v); },
-    getIcFrom: function () { return localStorage.getItem('friday_ic_from') || ''; },
-    setIcFrom: function (v) { localStorage.setItem('friday_ic_from', v); },
-    getAutoSend: function () { return localStorage.getItem('friday_autosend') === '1'; },
-    setAutoSend: function (v) { localStorage.setItem('friday_autosend', v ? '1' : '0'); },
-    getWake:  function () { return localStorage.getItem('friday_wake') === '1'; },
-    setWake:  function (v) { localStorage.setItem('friday_wake', v ? '1' : '0'); },
-    getDevice: function () { return localStorage.getItem('friday_device') || ''; },
-    setDevice: function (v) { localStorage.setItem('friday_device', v); },
+    getKey:    function () { return localStorage.getItem('anita_key') || ''; },
+    setKey:    function (v) { localStorage.setItem('anita_key', v); },
+    getVoice:  function () { return localStorage.getItem('anita_voice') || ''; },
+    setVoice:  function (v) { localStorage.setItem('anita_voice', v); },
+    getRate:   function () { return parseFloat(localStorage.getItem('anita_rate') || '1'); },
+    setRate:   function (v) { localStorage.setItem('anita_rate', String(v)); },
+    getPitch:  function () { return parseFloat(localStorage.getItem('anita_pitch') || '1.05'); },
+    setPitch:  function (v) { localStorage.setItem('anita_pitch', String(v)); },
+    getElOn:    function () { return localStorage.getItem('anita_el_on') === '1'; },
+    setElOn:    function (v) { localStorage.setItem('anita_el_on', v ? '1' : '0'); },
+    getElKey:   function () { return localStorage.getItem('anita_el_key') || ''; },
+    setElKey:   function (v) { localStorage.setItem('anita_el_key', v); },
+    getElVoice: function () { return localStorage.getItem('anita_el_voice') || ''; },
+    setElVoice: function (v) { localStorage.setItem('anita_el_voice', v); },
+    getElModel: function () { return localStorage.getItem('anita_el_model') || 'eleven_turbo_v2_5'; },
+    setElModel: function (v) { localStorage.setItem('anita_el_model', v); },
+    getSttOn:  function () { return localStorage.getItem('anita_stt_on') === '1'; },
+    setSttOn:  function (v) { localStorage.setItem('anita_stt_on', v ? '1' : '0'); },
+    getVolume: function () { var v = parseFloat(localStorage.getItem('anita_volume')); return isNaN(v) ? 1 : v; },
+    setVolume: function (v) { localStorage.setItem('anita_volume', String(v)); },
+    getMute:   function () { return localStorage.getItem('anita_mute') === '1'; },
+    setMute:   function (v) { localStorage.setItem('anita_mute', v ? '1' : '0'); },
+    getSys:    function () { return localStorage.getItem('anita_sys') || DEFAULT_SYSTEM; },
+    setSys:    function (v) { localStorage.setItem('anita_sys', v); },
+    getCity:   function () { return localStorage.getItem('anita_city') || ''; },
+    setCity:   function (v) { localStorage.setItem('anita_city', v); },
+    getTgTok:  function () { return localStorage.getItem('anita_tg_token') || ''; },
+    setTgTok:  function (v) { localStorage.setItem('anita_tg_token', v); },
+    getTgChat: function () { return localStorage.getItem('anita_tg_chat') || ''; },
+    setTgChat: function (v) { localStorage.setItem('anita_tg_chat', v); },
+    getIcUser: function () { return localStorage.getItem('anita_ic_user') || ''; },
+    setIcUser: function (v) { localStorage.setItem('anita_ic_user', v); },
+    getIcPass: function () { return localStorage.getItem('anita_ic_pass') || ''; },
+    setIcPass: function (v) { localStorage.setItem('anita_ic_pass', v); },
+    getIcFrom: function () { return localStorage.getItem('anita_ic_from') || ''; },
+    setIcFrom: function (v) { localStorage.setItem('anita_ic_from', v); },
+    getAutoSend: function () { return localStorage.getItem('anita_autosend') === '1'; },
+    setAutoSend: function (v) { localStorage.setItem('anita_autosend', v ? '1' : '0'); },
+    getWake:  function () { return localStorage.getItem('anita_wake') === '1'; },
+    setWake:  function (v) { localStorage.setItem('anita_wake', v ? '1' : '0'); },
+    getDevice: function () { return localStorage.getItem('anita_device') || ''; },
+    setDevice: function (v) { localStorage.setItem('anita_device', v); },
     // Default: a PC holds the phone line, the phone does not. Telegram has ONE inbox, so
     // if the phone polled it too it would swallow the messages Johnny sends from that very
     // phone, and the PC - which has all the real tools - would never see them.
-    getTgOwner: function () { var v = localStorage.getItem('friday_tg_owner'); return v === null ? DESKTOP : v === '1'; },
-    setTgOwner: function (v) { localStorage.setItem('friday_tg_owner', v ? '1' : '0'); },
-    getTheme: function () { return localStorage.getItem('friday_theme') || 'kyoto'; },
-    setTheme: function (v) { localStorage.setItem('friday_theme', v); },
-    getModel: function () { return localStorage.getItem('friday_model') || 'claude-opus-4-8'; },
-    setModel: function (v) { localStorage.setItem('friday_model', v); },
-    getBrief: function () { return localStorage.getItem('friday_brief') || ''; },
-    setBrief: function (v) { localStorage.setItem('friday_brief', v); },
+    getTgOwner: function () { var v = localStorage.getItem('anita_tg_owner'); return v === null ? DESKTOP : v === '1'; },
+    setTgOwner: function (v) { localStorage.setItem('anita_tg_owner', v ? '1' : '0'); },
+    getTheme: function () { return localStorage.getItem('anita_theme') || 'kyoto'; },
+    setTheme: function (v) { localStorage.setItem('anita_theme', v); },
+    getModel: function () { return localStorage.getItem('anita_model') || 'claude-opus-4-8'; },
+    setModel: function (v) { localStorage.setItem('anita_model', v); },
+    getBrief: function () { return localStorage.getItem('anita_brief') || ''; },
+    setBrief: function (v) { localStorage.setItem('anita_brief', v); },
     getZoom: function (mode) {
-      var v = parseFloat(localStorage.getItem('friday_zoom_' + mode));
+      var v = parseFloat(localStorage.getItem('anita_zoom_' + mode));
       if (isNaN(v) || v < 0.7 || v > 2.2) return null;    // null = never set for this display
       return v;
     },
-    setZoom: function (mode, v) { localStorage.setItem('friday_zoom_' + mode, String(v)); },
-    getTgVoice: function () { return localStorage.getItem('friday_tg_voice') !== '0'; },
-    setTgVoice: function (v) { localStorage.setItem('friday_tg_voice', v ? '1' : '0'); },
-    getBriefVoice: function () { return localStorage.getItem('friday_brief_voice') !== '0'; },
-    setBriefVoice: function (v) { localStorage.setItem('friday_brief_voice', v ? '1' : '0'); },
+    setZoom: function (mode, v) { localStorage.setItem('anita_zoom_' + mode, String(v)); },
+    getTgVoice: function () { return localStorage.getItem('anita_tg_voice') !== '0'; },
+    setTgVoice: function (v) { localStorage.setItem('anita_tg_voice', v ? '1' : '0'); },
+    getBriefVoice: function () { return localStorage.getItem('anita_brief_voice') !== '0'; },
+    setBriefVoice: function (v) { localStorage.setItem('anita_brief_voice', v ? '1' : '0'); },
     getTgVoice2: function () { return store.getTgVoice(); }
   };
 
@@ -928,7 +1026,7 @@
   // so settings appeared to "reset" across PC restarts / PWA-vs-exe launches. On the
   // desktop app we mirror every setting to a real JSON file the launcher owns
   // (outside the browser profile), load it on startup, and save on every change.
-  var PERSIST_RE = /^(friday_|sp_)/;
+  var PERSIST_RE = /^(anita_|sp_)/;
   var _origSet = localStorage.setItem.bind(localStorage);
   var _origRem = localStorage.removeItem.bind(localStorage);
   var settingsSaveTimer = null;
@@ -947,7 +1045,7 @@
       fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settingsSnapshot()) }).catch(function () {});
     }, 500);
   }
-  // auto-persist any friday_/sp_ write
+  // auto-persist any anita_/sp_ write
   localStorage.setItem = function (k, v) { _origSet(k, v); if (PERSIST_RE.test(k)) scheduleSettingsSave(); };
   localStorage.removeItem = function (k) { _origRem(k); if (PERSIST_RE.test(k)) scheduleSettingsSave(); };
   // load the file into localStorage BEFORE init reads any setting (sync = correct order)
@@ -980,16 +1078,16 @@
       return s;
     }
     // system prompt: if still corrupted after repair attempts, drop it so the clean default is used
-    var sys = localStorage.getItem('friday_sys');
+    var sys = localStorage.getItem('anita_sys');
     if (sys && MARK.test(sys)) {
       var fs = clean(sys);
-      if (fs && !MARK.test(fs)) _origSet('friday_sys', fs); else localStorage.removeItem('friday_sys');
+      if (fs && !MARK.test(fs)) _origSet('anita_sys', fs); else localStorage.removeItem('anita_sys');
     }
     // transcript is disposable visual history — just clear it if corrupted
-    var tr = localStorage.getItem('friday_transcript');
-    if (tr && MARK.test(tr)) localStorage.removeItem('friday_transcript');
+    var tr = localStorage.getItem('anita_transcript');
+    if (tr && MARK.test(tr)) localStorage.removeItem('anita_transcript');
     // user data (notes/memory/reminders): repair only if it cleans AND stays valid JSON
-    ['friday_notes', 'friday_memory', 'friday_reminders'].forEach(function (k) {
+    ['anita_notes', 'anita_memory', 'anita_reminders'].forEach(function (k) {
       var v = localStorage.getItem(k);
       if (!v || !MARK.test(v)) return;
       var f = clean(v);
@@ -1005,7 +1103,7 @@
     return v.indexOf('oqenc:v1:') === 0 ? '' : v;
   }
   function loadHostConfig() {
-    return fetch('/app-config?app=friday', { cache: 'no-store' })
+    return fetch('/app-config?app=anita', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         if (data && data.options) hostKey = usable(data.options.anthropic_api_key);
@@ -1051,12 +1149,12 @@
     var b = recapDayBounds();
     var lines = [];
     try {
-      var notes = JSON.parse(localStorage.getItem('friday_notes') || '[]');
+      var notes = JSON.parse(localStorage.getItem('anita_notes') || '[]');
       var n = notes.filter(function (x) { return x.t >= b.start && x.t < b.end; });
       if (n.length) lines.push('Notes he dictated: ' + n.map(function (x) { return x.text; }).join(' | '));
     } catch (e) {}
     try {
-      var rs = JSON.parse(localStorage.getItem('friday_reminders') || '[]');
+      var rs = JSON.parse(localStorage.getItem('anita_reminders') || '[]');
       var r = rs.filter(function (x) { return x.due && x.due >= b.start && x.due < b.end; });
       if (r.length) lines.push('Reminders that came due: ' + r.map(function (x) {
         return x.text + (x.done ? ' (done)' : ' (never marked done)');
@@ -1663,8 +1761,8 @@
   }
 
   // ---------- persistent memory (survives across sessions) ----------
-  function memList() { try { return JSON.parse(localStorage.getItem('friday_memory') || '[]'); } catch (e) { return []; } }
-  function memSave(l) { localStorage.setItem('friday_memory', JSON.stringify(l)); }
+  function memList() { try { return JSON.parse(localStorage.getItem('anita_memory') || '[]'); } catch (e) { return []; } }
+  function memSave(l) { localStorage.setItem('anita_memory', JSON.stringify(l)); }
   function execMemory(input) {
     var a = input.action, l = memList();
     if (a === 'remember') {
@@ -1698,8 +1796,8 @@
 
   // ---------- skill libraries (reference docs she can load on demand) ----------
   var skillIndex = [];   // [{name, source:'custom'|'folder', file?}]
-  function customSkills() { try { return JSON.parse(localStorage.getItem('friday_skills') || '[]'); } catch (e) { return []; } }
-  function saveCustomSkills(l) { localStorage.setItem('friday_skills', JSON.stringify(l)); }
+  function customSkills() { try { return JSON.parse(localStorage.getItem('anita_skills') || '[]'); } catch (e) { return []; } }
+  function saveCustomSkills(l) { localStorage.setItem('anita_skills', JSON.stringify(l)); }
   function loadSkillIndex() {
     skillIndex = customSkills().map(function (s) { return { name: s.name, source: 'custom' }; });
     if (DESKTOP) {
@@ -1828,9 +1926,9 @@
   }
 
   // ---------- Apple / iCloud Calendar (CalDAV via the launcher's local relay) ----------
-  function icReady() { return DESKTOP && !!(localStorage.getItem('friday_ic_user') && localStorage.getItem('friday_ic_pass')); }
+  function icReady() { return DESKTOP && !!(localStorage.getItem('anita_ic_user') && localStorage.getItem('anita_ic_pass')); }
   function icAuth() {
-    return 'Basic ' + btoa(localStorage.getItem('friday_ic_user') + ':' + localStorage.getItem('friday_ic_pass'));
+    return 'Basic ' + btoa(localStorage.getItem('anita_ic_user') + ':' + localStorage.getItem('anita_ic_pass'));
   }
   function caldav(method, url, body, depth, contentType, ifNoneMatch) {
     return fetch('/caldav', {
@@ -1851,7 +1949,7 @@
   function icDiscover(force) {
     if (!force) {
       try {
-        var cached = JSON.parse(localStorage.getItem('friday_ic_cals') || 'null');
+        var cached = JSON.parse(localStorage.getItem('anita_ic_cals') || 'null');
         if (cached && cached.cals && cached.cals.length) return Promise.resolve(cached);
       } catch (e) {}
     }
@@ -1886,7 +1984,7 @@
         });
         if (!cals.length) throw new Error('No event calendars found on this iCloud account.');
         var out = { home: home, cals: cals };
-        localStorage.setItem('friday_ic_cals', JSON.stringify(out));
+        localStorage.setItem('anita_ic_cals', JSON.stringify(out));
         return out;
       });
     });
@@ -1961,7 +2059,7 @@
     var end = new Date(start.getTime() + (minutes > 0 ? minutes : 60) * 60000);
     return icDiscover().then(function (disc) {
       var cal = disc.cals[0];
-      var uid = 'friday-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+      var uid = 'anita-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
       var ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Anita//EN\r\nBEGIN:VEVENT\r\nUID:' + uid +
         '\r\nDTSTAMP:' + utcStamp(new Date()) + '\r\nDTSTART:' + utcStamp(start) + '\r\nDTEND:' + utcStamp(end) +
         '\r\nSUMMARY:' + String(title).replace(/([,;])/g, '\\$1') + '\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n';
@@ -1999,7 +2097,7 @@
     store.setIcPass($('icPass').value.trim());
     if (!icReady()) { updateIcloudUI(); return; }
     $('icHint').textContent = 'Connecting to iCloud…';
-    localStorage.removeItem('friday_ic_cals');
+    localStorage.removeItem('anita_ic_cals');
     icDiscover(true).then(function (disc) {
       $('icHint').textContent = 'Connected ✓ — found ' + disc.cals.length + ' calendar(s): ' +
         disc.cals.map(function (c) { return c.name; }).join(', ') + '. New events go to "' + disc.cals[0].name + '".';
@@ -2283,9 +2381,9 @@
   }
 
   function loadReminders() {
-    try { return JSON.parse(localStorage.getItem('friday_reminders') || '[]'); } catch (e) { return []; }
+    try { return JSON.parse(localStorage.getItem('anita_reminders') || '[]'); } catch (e) { return []; }
   }
-  function saveReminders(list) { localStorage.setItem('friday_reminders', JSON.stringify(list)); }
+  function saveReminders(list) { localStorage.setItem('anita_reminders', JSON.stringify(list)); }
   function execReminders(input) {
     var a = input.action, list = loadReminders();
     if (a === 'add') {
@@ -2331,11 +2429,11 @@
   function execNotes(input) {
     var a = input.action;
     var notes = [];
-    try { notes = JSON.parse(localStorage.getItem('friday_notes') || '[]'); } catch (e) {}
+    try { notes = JSON.parse(localStorage.getItem('anita_notes') || '[]'); } catch (e) {}
     if (a === 'add') {
       if (!input.text) return Promise.resolve('A note needs text.');
       notes.push({ t: Date.now(), text: input.text });
-      localStorage.setItem('friday_notes', JSON.stringify(notes));
+      localStorage.setItem('anita_notes', JSON.stringify(notes));
       return Promise.resolve('Noted.');
     }
     if (a === 'list') {
@@ -2343,7 +2441,7 @@
       return Promise.resolve(notes.map(function (n, i) { return (i + 1) + '. ' + n.text; }).join('; '));
     }
     if (a === 'clear') {
-      localStorage.setItem('friday_notes', '[]');
+      localStorage.setItem('anita_notes', '[]');
       return Promise.resolve('All notes cleared.');
     }
     return Promise.resolve('Unknown notes action.');
@@ -2398,13 +2496,13 @@
   // The engine owns the board and legality; Claude plays via the `game` tool.
   var game = null;   // {type, over, turn:'u'|'f', ...per-game}
 
-  function scoresAll() { try { return JSON.parse(localStorage.getItem('friday_scores') || '{}'); } catch (e) { return {}; } }
+  function scoresAll() { try { return JSON.parse(localStorage.getItem('anita_scores') || '{}'); } catch (e) { return {}; } }
   function recordResult(type, w) {
     var all = scoresAll();
     var g = all[type] || { u: 0, f: 0, d: 0 };
     if (w === 1) g.u++; else if (w === 2) g.f++; else g.d++;
     all[type] = g;
-    localStorage.setItem('friday_scores', JSON.stringify(all));
+    localStorage.setItem('anita_scores', JSON.stringify(all));
     updateDockScore(type);
   }
   function scoreLine(type) {
@@ -3266,8 +3364,8 @@
         .then(function (st) {
           var run = st && st.latest;
           if (!run || !run.runId || run.status === 'running') return;
-          if (localStorage.getItem('friday_pbi_seen') === run.runId) return;
-          localStorage.setItem('friday_pbi_seen', run.runId);
+          if (localStorage.getItem('anita_pbi_seen') === run.runId) return;
+          localStorage.setItem('anita_pbi_seen', run.runId);
           var line = pbiSpoken(run);
           var extra = (run.notes && run.notes.length) ? (' It logged ' + run.notes.length + ' note' + (run.notes.length === 1 ? '' : 's') + ' along the way.') : '';
           addMsg('sys', '\uD83D\uDCCA ' + line + extra);
@@ -4008,7 +4106,7 @@
   function tgPoll() {
     if (!tgReady() || busy || tgPollBusy || !tgIsOwner()) return;
     tgPollBusy = true;
-    var offKey = 'friday_tg_off';
+    var offKey = 'anita_tg_off';
     var off = localStorage.getItem(offKey);
     var firstRun = off === null;
     fetch('https://api.telegram.org/bot' + store.getTgTok() + '/getUpdates?timeout=0' + (off ? '&offset=' + off : ''))
@@ -4090,8 +4188,8 @@
     var now = new Date();
     var hhmm = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
     var today = now.toDateString();
-    if (hhmm === at && localStorage.getItem('friday_brief_last') !== today) {
-      localStorage.setItem('friday_brief_last', today);
+    if (hhmm === at && localStorage.getItem('anita_brief_last') !== today) {
+      localStorage.setItem('anita_brief_last', today);
       runBriefing();
     }
   }, 25000);
@@ -4145,12 +4243,12 @@
   // when he asks for one by name.
 
   // ---------- session transcript (visual continuity across restarts) ----------
-  function transcriptLoad() { try { return JSON.parse(localStorage.getItem('friday_transcript') || '[]'); } catch (e) { return []; } }
+  function transcriptLoad() { try { return JSON.parse(localStorage.getItem('anita_transcript') || '[]'); } catch (e) { return []; } }
   function transcriptPush(role, text) {
     var l = transcriptLoad();
     l.push({ r: role, t: text });
     if (l.length > 40) l = l.slice(-40);
-    localStorage.setItem('friday_transcript', JSON.stringify(l));
+    localStorage.setItem('anita_transcript', JSON.stringify(l));
   }
 
   // ---------- sentence chunking ----------
@@ -4516,7 +4614,7 @@
     if (!b) return;
     var m = store.getMute();
     b.classList.toggle('active', m);
-    b.textContent = m ? '\uD83D\uDD07 Muted' : '\uD83D\uDD08 Voice';
+    b.textContent = m ? '\uD83D\uDD07' : '\uD83D\uDD0A';
     b.title = m ? 'Voice replies are off \u2014 tap to let her speak again' : 'Turn off her voice (meetings)';
   }
   if ($('muteBtn')) $('muteBtn').onclick = function () {
@@ -4546,6 +4644,78 @@
     autoBtn.classList.toggle('active', autoListen);
     if (autoListen && !listening && !busy && !speaking) startListening();
   };
+
+  // ---------- header: Clear and Config fold away ----------
+  (function () {
+    var row = document.querySelector('.hbtns');
+    var more = document.getElementById('moreBtn');
+    if (!row || !more) return;
+    more.onclick = function (e) { e.stopPropagation(); row.classList.toggle('open'); };
+    // Anything else closes it, including using one of the buttons it revealed.
+    document.addEventListener('click', function (e) {
+      if (!row.contains(e.target)) row.classList.remove('open');
+    });
+    ['clearBtn', 'settingsBtn'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.addEventListener('click', function () { row.classList.remove('open'); });
+    });
+  })();
+
+  // ---------- glance panel (letterbox screens only) ----------
+  // Everything here already exists elsewhere; this just surfaces it without being asked,
+  // which is the point of a screen that is always on. Desktop only - the endpoints behind it
+  // are the launcher's.
+  function glanceRow(icon, value, label, warn, ask) {
+    return '<div class="g' + (warn ? ' warn' : '') + '"' +
+           (ask ? ' data-ask="' + ask.replace(/"/g, '&quot;') + '" title="Tap to ask"' : '') +
+           '><i>' + icon + '</i><b>' + value + '</b> <i>' + label + '</i></div>';
+  }
+
+  // A glanceable number invites a follow-up question, so let the tap ask it.
+  if ($('glance')) $('glance').addEventListener('click', function (e) {
+    var row = e.target && e.target.closest ? e.target.closest('.g') : null;
+    if (!row || !row.getAttribute('data-ask') || busy) return;
+    stopSpeaking();
+    lastInputWasVoice = false;
+    sendToClaude(row.getAttribute('data-ask'));
+  });
+
+  function refreshGlance() {
+    var el = $('glance');
+    if (!el || !DESKTOP) return;
+    if (getComputedStyle(el).display === 'none') return;   // not on a letterbox screen
+    var rows = [];
+
+    var jobs = [
+      fetchTasks({ action: 'list' }).catch(function () { return null; }),
+      fetch('/devices', { cache: 'no-store' }).then(function (r) { return r.json(); }).catch(function () { return null; }),
+      fetch('/agent-report', { cache: 'no-store' }).then(function (r) { return r.json(); }).catch(function () { return null; })
+    ];
+    Promise.all(jobs).then(function (res) {
+      var tasks = res[0], fleet = res[1], rep = res[2];
+
+      if (tasks && typeof tasks.openCount === 'number') {
+        rows.push(glanceRow('\u2705', tasks.openCount, tasks.openCount === 1 ? 'thing to do' : 'things to do', false, "What's on my list?"));
+      }
+      try {
+        var open = loadReminders().filter(function (r) { return !r.done; });
+        if (open.length) rows.push(glanceRow('\u23F0', open.length, open.length === 1 ? 'reminder' : 'reminders', false, 'What reminders do I have?'));
+      } catch (e) {}
+      if (fleet && fleet.devices) {
+        var awake = fleet.devices.filter(function (d) { return d.online; }).length;
+        rows.push(glanceRow('\uD83D\uDCBB', awake, awake === 1 ? 'machine awake' : 'machines awake', false, 'Where else are you open?'));
+      }
+      if (rep && rep.counts) {
+        var bad = (rep.counts.problems || 0);
+        rows.push(glanceRow('\uD83D\uDCCB', rep.counts.completed || 0, 'runs done', false, 'Summarise the last Grunt report.'));
+        if (bad) rows.push(glanceRow('\u26A0', bad, bad === 1 ? 'run needs you' : 'runs need you', true, 'Which runs need my attention and why?'));
+      }
+      el.innerHTML = rows.join('');
+    });
+  }
+
+  setInterval(refreshGlance, 60000);
+  setTimeout(refreshGlance, 1500);
 
   // ---------- text size ----------
   // Scales the WHOLE interface, not just type: enlarging the text alone would leave the orb
@@ -4680,7 +4850,7 @@
   $('clearBtn').onclick = function () {
     history = [];
     chat.innerHTML = '';
-    localStorage.removeItem('friday_transcript');
+    localStorage.removeItem('anita_transcript');
     stopSpeaking();
     addMsg('sys', 'Conversation cleared.');
     setState('idle');
@@ -4739,7 +4909,7 @@
   };
   if ($('elVoice')) $('elVoice').onchange = function () {
     var opt = this.options[this.selectedIndex];
-    if (opt) localStorage.setItem('friday_el_voice_name', opt.textContent);
+    if (opt) localStorage.setItem('anita_el_voice_name', opt.textContent);
   };
   if ($('elTest')) $('elTest').onclick = function () {
     var key = $('elKey').value.trim(), voice = $('elVoice').value;
@@ -4841,7 +5011,7 @@
   if ($('elVoice') && store.getElVoice()) {
     var o = document.createElement('option');
     o.value = store.getElVoice();
-    o.textContent = localStorage.getItem('friday_el_voice_name') || 'saved voice';
+    o.textContent = localStorage.getItem('anita_el_voice_name') || 'saved voice';
     o.selected = true;
     $('elVoice').appendChild(o);
   }
