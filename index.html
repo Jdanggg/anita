@@ -1032,7 +1032,7 @@
   function describeUsage(u) {
     if (!u) return '';
     var out = [];
-    var W = [['last5h', 'last 5 hours'], ['today', 'today'], ['last7d', 'last 7 days']];
+    var W = [['last5h', 'last 5 hours'], ['today', 'today'], ['thisWeek', 'this plan week'], ['last7d', 'last 7 days']];
     for (var i = 0; i < W.length; i++) {
       var w = u.claudeCode[W[i][0]];
       if (!w) continue;
@@ -1041,7 +1041,8 @@
       }).join(', ');
       out.push('Claude Code, ' + W[i][1] + ': ' + w.total.messages + ' messages, ' +
                fmtTokens(w.total.output) + ' output tokens, ' + fmtTokens(w.total.cacheRead) +
-               ' read from cache' + (per ? '. By model: ' + per : '') + '.');
+               ' read from cache' + (per ? '. By model: ' + per : '') + '.' +
+               (w.throttled ? ' He was rate-limited ' + w.throttled + ' time(s) in this window.' : ''));
     }
     var e = u.elevenLabs;
     if (e && !e.error && e.limit) {
@@ -1051,16 +1052,46 @@
       out.push('ElevenLabs quota could not be read: ' + e.error +
                ' (a 401 here means the API key lacks the User:Read permission - text-to-speech still works).');
     }
+    var est = u.planEstimate || {};
+    var names = { last5h: 'the 5-hour limit', thisWeek: 'the weekly limit' };
+    var haveEst = false;
+    for (var k in est) {
+      if (!est.hasOwnProperty(k)) continue;
+      haveEst = true;
+      var e2 = est[k];
+      out.push('Estimated ' + (names[k] || k) + ': about ' + e2.estimatePercent + '%' +
+               (e2.range ? ' (between ' + e2.range[0] + '% and ' + e2.range[1] + '%)' : '') +
+               ' - ' + e2.confidence + ', from ' + e2.readings + ' reading(s) he has given.');
+    }
+    if (u.weekResetsAt) out.push('The plan week resets ' + new Date(u.weekResetsAt).toString().slice(0, 21) + '.');
     if (u.cacheAgeMinutes > 1) out.push('These figures are ' + Math.round(u.cacheAgeMinutes) + ' minutes old.');
+    if (haveEst) {
+      out.push('The percentages above are ESTIMATES calibrated from readings he gave you, not values read from ' +
+               'his account - say so, and offer to sharpen them if he reads a bar to you again.');
+      return out.join('\n');
+    }
     out.push('IMPORTANT: these are TOKEN COUNTS from local transcripts, not the plan\'s percentage bars. ' +
              'The 5-hour and weekly percentages are server-side and cannot be read, so do not quote a percentage ' +
-             'of the plan or claim to know how much is left - describe consumption only.');
+             'of the plan or claim to know how much is left - describe consumption only. Then offer this: ' +
+             'if he reads a bar to you once ("weekly is at 76 percent") you can record it and estimate from ' +
+             'then on, getting sharper with each reading.');
     return out.join('\n');
   }
 
-  function execUsage() {
+  function execUsage(input) {
     if (!DESKTOP) {
       return Promise.resolve('Usage figures come from the launcher, which the phone cannot reach. Ask on a PC.');
+    }
+    if (input && input.action === 'calibrate') {
+      if (!input.bar || !input.percent) {
+        return Promise.resolve('To record a reading I need which bar (last5h or thisWeek) and the percentage shown.');
+      }
+      return fetch('/usage-calibrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bar: input.bar, percent: input.percent })
+      }).then(function (r) { return r.text(); })
+        .catch(function (e) { return 'Could not record that: ' + e.message; });
     }
     return fetchUsage().then(function (u) {
       return u ? describeUsage(u) : 'Could not read the usage report.';
@@ -2760,8 +2791,12 @@
           at: { type: 'string' }
         }, required: ['action'] } },
       { name: 'usage',
-        description: "How much Johnny has consumed: Claude Code tokens by model over the last 5 hours / today / last 7 days, and his ElevenLabs character quota. Use when he asks about usage, limits, how much he has left, or what he has been burning through.",
-        input_schema: { type: 'object', properties: {}, required: [] } },
+        description: "Johnny's consumption. action='report' (default) gives Claude Code tokens by model over the last 5 hours / today / this plan week, how many times he was rate-limited, his ElevenLabs quota, and a CALIBRATED ESTIMATE of the plan bars if he has given readings. action='calibrate' records what a plan bar actually says - use it whenever he tells you a percentage he can see on screen, e.g. 'weekly is at 76%' -> bar='thisWeek', percent=76. Each reading makes the estimate better, so if he asks how close he is and there are no readings yet, ask him to read the bar to you once.",
+        input_schema: { type: 'object', properties: {
+          action:  { type: 'string', enum: ['report', 'calibrate'] },
+          bar:     { type: 'string', enum: ['last5h', 'thisWeek'] },
+          percent: { type: 'number' }
+        }, required: [] } },
       { name: 'send_briefing',
         description: "Send Johnny his spoken briefing as an audio file to his phone. kind='morning' is the full daily briefing including The Grunt's end-of-day report (what was completed, what failed, what is still in the backlog); kind='recap' is just yesterday's recap. Use whenever he asks for his briefing, to resend it, or for a recap of yesterday - do NOT write the briefing yourself in chat, call this so he gets the audio.",
         input_schema: { type: 'object', properties: {
@@ -3045,7 +3080,7 @@
       if (name === 'weather') return execWeather(input);
       if (name === 'timer') return execTimer(input);
       if (name === 'reminders') return execReminders(input);
-      if (name === 'usage') return execUsage();
+      if (name === 'usage') return execUsage(input);
       if (name === 'send_briefing') return execSendBriefing(input);
       if (name === 'notes') return execNotes(input);
       if (name === 'random') return execRandom(input);
