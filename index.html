@@ -3969,7 +3969,38 @@
       .catch(function () {})
       .then(function () { tgPollBusy = false; });
   }
-  setInterval(tgPoll, 4000);
+  // On the desktop the LAUNCHER receives Telegram and holds a queue; the page just drains
+  // it. That is the whole point: the launcher is always running, so a closed window can no
+  // longer swallow messages silently. Off the launcher origin, tgPoll still runs directly.
+  function tgDrainInbox() {
+    if (busy) return;                       // let the current turn finish first
+    fetch('/tg-inbox', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (items) {
+        if (!items || !items.length) return;
+        // Oldest first, but only act on the last one - she is a conversation, not a batch
+        // processor, and answering a backlog one by one would be worse than useless.
+        var last = items[items.length - 1];
+        if (items.length > 1) addMsg('sys', items.length + ' messages arrived; answering the most recent.');
+        if (last.photo) {
+          addMsg('sys', '\uD83D\uDCF7 photo from your phone');
+          tgFetchImage(last.photo).then(function (im) {
+            if (!im) { sendTelegram('I could not download that image.'); return; }
+            sendToClaude(last.text || 'Have a look at this.', { viaTelegram: true, images: [im] });
+          });
+          return;
+        }
+        tgRouteIfAddressed(last.text).then(function (routed) {
+          if (routed) return;
+          addMsg('sys', '\uD83D\uDCF1 message from your phone');
+          sendToClaude(last.text, { viaTelegram: true });
+        });
+      })
+      .catch(function () {});
+  }
+
+  if (DESKTOP) setInterval(tgDrainInbox, 2500);
+  else setInterval(tgPoll, 4000);
 
   // ---------- scheduled morning briefing ----------
   setInterval(function () {
