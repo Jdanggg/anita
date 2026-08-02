@@ -2944,8 +2944,10 @@
   // has three very different causes and the user cannot tell them apart.
   function elSpeak(text) {
     var key = store.getElKey(), voice = store.getElVoice();
+    // optimize_streaming_latency is deprecated; the plain endpoint is the better-supported
+    // path for browser callers and returns the whole clip in one go.
     var url = 'https://api.elevenlabs.io/v1/text-to-speech/' + encodeURIComponent(voice) +
-              '/stream?optimize_streaming_latency=3&output_format=mp3_44100_128';
+              '?output_format=mp3_44100_128';
     return fetch(url, {
       method: 'POST',
       headers: { 'xi-api-key': key, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
