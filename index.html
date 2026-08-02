@@ -1013,6 +1013,60 @@
   // The Grunt's end-of-day report: what finished, what broke, what is still owed. Written by
   // scripts/day-close.ps1 on a schedule, so it is already on disk before the morning briefing
   // runs and the briefing never has to wait on an agent session being alive.
+  function fetchUsage() {
+    if (!DESKTOP) return Promise.resolve(null);        // the phone cannot reach the launcher
+    return fetch('/usage', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { return (j && j.claudeCode) ? j : null; })
+      .catch(function () { return null; });
+  }
+
+  function fmtTokens(n) {
+    n = Number(n) || 0;
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return Math.round(n / 1e3) + 'k';
+    return String(n);
+  }
+
+  function describeUsage(u) {
+    if (!u) return '';
+    var out = [];
+    var W = [['last5h', 'last 5 hours'], ['today', 'today'], ['last7d', 'last 7 days']];
+    for (var i = 0; i < W.length; i++) {
+      var w = u.claudeCode[W[i][0]];
+      if (!w) continue;
+      var per = (w.byModel || []).map(function (m) {
+        return m.model + ' ' + fmtTokens(m.output) + ' out over ' + m.messages + ' messages';
+      }).join(', ');
+      out.push('Claude Code, ' + W[i][1] + ': ' + w.total.messages + ' messages, ' +
+               fmtTokens(w.total.output) + ' output tokens, ' + fmtTokens(w.total.cacheRead) +
+               ' read from cache' + (per ? '. By model: ' + per : '') + '.');
+    }
+    var e = u.elevenLabs;
+    if (e && !e.error && e.limit) {
+      out.push('ElevenLabs: ' + e.used + ' of ' + e.limit + ' characters used (' + e.percent + '%)' +
+               (e.resetsAt ? ', resets ' + new Date(e.resetsAt).toDateString() : '') + '.');
+    } else if (e && e.error) {
+      out.push('ElevenLabs quota could not be read: ' + e.error +
+               ' (a 401 here means the API key lacks the User:Read permission - text-to-speech still works).');
+    }
+    if (u.cacheAgeMinutes > 1) out.push('These figures are ' + Math.round(u.cacheAgeMinutes) + ' minutes old.');
+    out.push('IMPORTANT: these are TOKEN COUNTS from local transcripts, not the plan\'s percentage bars. ' +
+             'The 5-hour and weekly percentages are server-side and cannot be read, so do not quote a percentage ' +
+             'of the plan or claim to know how much is left - describe consumption only.');
+    return out.join('\n');
+  }
+
+  function execUsage() {
+    if (!DESKTOP) {
+      return Promise.resolve('Usage figures come from the launcher, which the phone cannot reach. Ask on a PC.');
+    }
+    return fetchUsage().then(function (u) {
+      return u ? describeUsage(u) : 'Could not read the usage report.';
+    });
+  }
+
   function fetchDayReport() {
     if (!DESKTOP) return Promise.resolve(null);        // the phone cannot reach the launcher
     return fetch('/agent-report', { cache: 'no-store' })
@@ -2705,6 +2759,9 @@
           in_minutes: { type: 'number' },
           at: { type: 'string' }
         }, required: ['action'] } },
+      { name: 'usage',
+        description: "How much Johnny has consumed: Claude Code tokens by model over the last 5 hours / today / last 7 days, and his ElevenLabs character quota. Use when he asks about usage, limits, how much he has left, or what he has been burning through.",
+        input_schema: { type: 'object', properties: {}, required: [] } },
       { name: 'send_briefing',
         description: "Send Johnny his spoken briefing as an audio file to his phone. kind='morning' is the full daily briefing including The Grunt's end-of-day report (what was completed, what failed, what is still in the backlog); kind='recap' is just yesterday's recap. Use whenever he asks for his briefing, to resend it, or for a recap of yesterday - do NOT write the briefing yourself in chat, call this so he gets the audio.",
         input_schema: { type: 'object', properties: {
@@ -2988,6 +3045,7 @@
       if (name === 'weather') return execWeather(input);
       if (name === 'timer') return execTimer(input);
       if (name === 'reminders') return execReminders(input);
+      if (name === 'usage') return execUsage();
       if (name === 'send_briefing') return execSendBriefing(input);
       if (name === 'notes') return execNotes(input);
       if (name === 'random') return execRandom(input);
@@ -3726,7 +3784,9 @@
   // The morning briefing now carries The Grunt's day-close report - what got completed and
   // what is still owed - and is delivered by voice so he can listen instead of read.
   function runBriefing() {
-    return fetchDayReport().then(function (rep) {
+    return Promise.all([fetchDayReport(), fetchUsage()]).then(function (both) {
+      var rep = both[0];
+      var usage = describeUsage(both[1]);
       var facts = describeDayReport(rep);
       var prompt = 'Give me my daily briefing.';
       if (facts) {
@@ -3739,6 +3799,12 @@
       } else {
         prompt += '\n\nThere is no end-of-day report from The Grunt, so say briefly that there ' +
                   'is nothing logged from the VDI rather than guessing at what happened.';
+      }
+      if (usage) {
+        prompt += '\n\nHis usage:\n' + usage +
+                  '\n\nClose with one or two sentences on usage - how hard he has been going and ' +
+                  'anything close to a real limit. Keep it brief and do not read the numbers out ' +
+                  'digit by digit.';
       }
       prompt += ' It will be read aloud, so write plain spoken sentences: no markdown, no bullet ' +
                 'points, no headings, no emoji.';
