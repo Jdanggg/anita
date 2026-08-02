@@ -484,9 +484,11 @@
     /* THE RAIL IS OUT OF FLOW. body is a row here, so leaving these as flex siblings gave each
        one its own column - which is what squashed the glance panel into a strip of icons.
        Fixed offsets inside a reserved 300px strip cannot collapse like that. */
-    --rail: 300px;
-
-    body { flex-direction: row; align-items: stretch; }
+    /* A custom property only exists inside a rule. Declared loose in the @media block it was
+       never defined at all, so every var(--rail) below silently resolved to nothing - which is
+       why the transcript started at x=0 and ran underneath the rail. */
+    body { --rail: 300px; flex-direction: row; align-items: stretch; }
+    body.railoff { --rail: 8px; }
 
     header {
       position: fixed; left: 20px; top: 12px; width: calc(var(--rail) - 34px);
@@ -551,6 +553,20 @@
     #settings { width: 420px; right: -460px; }
     body.cfgopen #chat { padding-right: 452px; }
     body.cfgopen #composer, body.cfgopen #attachRow { right: 436px; }
+
+    /* The rail folds away when he wants the full width for the transcript. */
+    /* body #railBtn, not #railBtn: the base display:none is appended after this query and a
+       media query adds no specificity, so a bare rule would lose and the button never show.
+       Same trap that hid the glance panel earlier. */
+    body #railBtn {
+      display: block; position: fixed; left: 14px; bottom: 12px; z-index: 13;
+      background: var(--surface); border: 1px solid var(--edge); color: var(--dim);
+      border-radius: 9px; padding: 5px 10px; font-size: 14px; line-height: 1; cursor: pointer;
+    }
+    #railBtn:hover { color: var(--ink); border-color: var(--accent); }
+    body.railoff header, body.railoff #orbWrap, body.railoff #status,
+    body.railoff #vu, body.railoff #glance { display: none; }
+    body.railoff #railBtn { left: 10px; }
     #gameDock { width: min(420px, 40vw); }
   }
 
@@ -605,6 +621,7 @@
   .hbtns.open .hmore { color: var(--accent); border-color: var(--accent); }
   #glance .g[data-ask] { cursor: pointer; }
   #glance .g[data-ask]:hover { border-color: var(--accent); }
+  #railBtn { display: none; }
 
   /* ================= phone ================= */
   @media (max-width: 820px) {
@@ -678,6 +695,7 @@
 
 <div id="chat"></div>
 
+<button id="railBtn" type="button" title="Show or hide the side panel">☰</button>
 <div id="glance"></div>
 <div id="attachRow"></div>
 <div id="composer">
@@ -4669,6 +4687,17 @@
     return '<div class="g' + (warn ? ' warn' : '') + '"' +
            (ask ? ' data-ask="' + ask.replace(/"/g, '&quot;') + '" title="Tap to ask"' : '') +
            '><i>' + icon + '</i><b>' + value + '</b> <i>' + label + '</i></div>';
+  }
+
+  // The rail folds away for the full-width transcript. Remembered, because a panel that
+  // resets every restart is worse than one that is simply not there.
+  if ($('railBtn')) {
+    if (localStorage.getItem('anita_railoff') === '1') document.body.classList.add('railoff');
+    $('railBtn').onclick = function () {
+      var off = document.body.classList.toggle('railoff');
+      localStorage.setItem('anita_railoff', off ? '1' : '0');
+      if (chat) chat.scrollTop = chat.scrollHeight;
+    };
   }
 
   // A glanceable number invites a follow-up question, so let the tap ask it.
