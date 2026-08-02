@@ -2706,6 +2706,11 @@
           in_minutes: { type: 'number' },
           at: { type: 'string' }
         }, required: ['action'] } },
+      { name: 'send_briefing',
+        description: "Send Johnny his spoken briefing as an audio file to his phone. kind='morning' is the full daily briefing including The Grunt's end-of-day report (what was completed, what failed, what is still in the backlog); kind='recap' is just yesterday's recap. Use whenever he asks for his briefing, to resend it, or for a recap of yesterday - do NOT write the briefing yourself in chat, call this so he gets the audio.",
+        input_schema: { type: 'object', properties: {
+          kind: { type: 'string', enum: ['morning', 'recap'] }
+        }, required: ['kind'] } },
       { name: 'notes',
         description: 'Quick voice notes the user dictates. add / list / clear.',
         input_schema: { type: 'object', properties: {
@@ -2984,6 +2989,7 @@
       if (name === 'weather') return execWeather(input);
       if (name === 'timer') return execTimer(input);
       if (name === 'reminders') return execReminders(input);
+      if (name === 'send_briefing') return execSendBriefing(input);
       if (name === 'notes') return execNotes(input);
       if (name === 'random') return execRandom(input);
       if (name === 'text_me') return sendTelegram(String(input.message || ''));
@@ -3507,9 +3513,37 @@
     listening = false;
     micBtn.classList.remove('active');
   }
+  // A briefing is a whole Claude turn of its own, so it cannot run from inside the turn that
+  // asked for it. Arm it here, fire it in onTurnFinished once the current turn is closed.
+  var pendingBrief = null;
+  function execSendBriefing(input) {
+    var kind = (input && input.kind) === 'recap' ? 'recap' : 'morning';
+    if (!DESKTOP && kind === 'morning') {
+      // The phone cannot reach /agent-report, so a "morning briefing" from there would
+      // silently drop the part he actually wants. Say so instead of half-delivering it.
+      pendingBrief = kind;
+      return Promise.resolve('Arming the briefing - but this is the phone build, so it will not ' +
+        'include The Grunt report. Ask on the PC for the full one.');
+    }
+    if (!tgReady()) {
+      return Promise.resolve('Telegram is not set up on this machine, so there is nowhere to send ' +
+        'the audio. It can only be spoken here.');
+    }
+    pendingBrief = kind;
+    return Promise.resolve(kind === 'recap'
+      ? "Recap is on its way to his phone as an audio file - don't repeat it here, just say it's sending."
+      : "Briefing is on its way to his phone as an audio file - don't repeat it here, just say it's sending.");
+  }
+
   function onTurnFinished() {
     setState('idle');
     unduckSpotify();
+    if (pendingBrief) {
+      var kind = pendingBrief;
+      pendingBrief = null;
+      // A tick of daylight so this turn is fully closed before the next one opens.
+      setTimeout(function () { if (kind === 'recap') runRecap(); else runBriefing(); }, 300);
+    }
     if (autoListen && lastInputWasVoice) setTimeout(startListening, 350);
     else if (store.getWake()) setTimeout(wakeStart, 400);
   }
