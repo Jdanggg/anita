@@ -1097,6 +1097,40 @@
     return out.join('\n');
   }
 
+  function fetchTasks(body) {
+    return fetch('/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || { action: 'list' })
+    }).then(function (r) { return r.json(); });
+  }
+
+  function describeTasks(j) {
+    if (!j) return '';
+    if (j.error) return j.error + (j.candidates ? ' Candidates: ' + j.candidates.map(function (c) { return '"' + c.text + '"'; }).join(', ') : '');
+    if (j.message) return j.message + (typeof j.open === 'number' ? ' (' + j.open + ' still open)' : '');
+    var out = [];
+    if (!j.openCount) out.push('His action list is empty.');
+    else {
+      out.push(j.openCount + ' thing(s) on his list: ' + j.open.map(function (t) {
+        return t.text + (t.note ? ' (' + t.note + ')' : '');
+      }).join(' | '));
+    }
+    if (j.doneThisWeek && j.doneThisWeek.length) {
+      out.push('Closed in the last week: ' + j.doneThisWeek.map(function (t) { return t.text; }).join(' | '));
+    }
+    return out.join('\n');
+  }
+
+  function execTasks(input) {
+    if (!DESKTOP) {
+      return Promise.resolve('His action list lives on the PC, which the phone cannot reach. Ask on a PC, or text her there.');
+    }
+    return fetchTasks(input || { action: 'list' })
+      .then(describeTasks)
+      .catch(function (e) { return 'Could not reach the task list: ' + e.message; });
+  }
+
   function execPlaud(input) {
     if (!DESKTOP) {
       return Promise.resolve('His Plaud recordings are read through the CLI on the PC, which the phone cannot reach. Ask on a PC.');
@@ -2859,6 +2893,15 @@
           in_minutes: { type: 'number' },
           at: { type: 'string' }
         }, required: ['action'] } },
+      { name: 'tasks',
+        description: "Johnny's OWN running action list - the things he has to do. This is NOT The Grunt's backlog: that is the agent's work queue and lives separately, so never move items between them or report them as one list. action='list' for what is open (plus anything closed in the last week), 'add' with text to put something on it, 'done' to close one, 'remove' to delete one outright, 'clear' to drop everything already completed. To close an item use match with a few distinctive words rather than the id - if it matches more than one you will be told the candidates, so ask him which. When he mentions in passing that he has finished something, offer to tick it off; when he says he needs to do something, offer to add it. Do not add things he has not asked you to.",
+        input_schema: { type: 'object', properties: {
+          action: { type: 'string', enum: ['list', 'add', 'done', 'remove', 'clear'] },
+          text:   { type: 'string' },
+          note:   { type: 'string' },
+          match:  { type: 'string' },
+          id:     { type: 'string' }
+        }, required: ['action'] } },
       { name: 'plaud',
         description: "Johnny's Plaud voice recorder: meetings, notes and calls he has recorded, with transcripts and Plaud's own AI summaries. action='today' for today's recordings, 'recent' (optional days, default 7), 'files' for the most recent regardless of date, 'search' with query (and optional from/to dates as YYYY-MM-DD) to find a recording by what was said in it, 'transcript' with id for the full timestamped text, 'summary' with id for Plaud's summary. Listings include the recording id - take it from there and pass it to transcript or summary. When he asks you to summarise a meeting or catch him up on what was said, search or list first to find the right recording, then pull the transcript and write your own summary rather than just repeating Plaud's.",
         input_schema: { type: 'object', properties: {
@@ -3171,6 +3214,7 @@
       if (name === 'weather') return execWeather(input);
       if (name === 'timer') return execTimer(input);
       if (name === 'reminders') return execReminders(input);
+      if (name === 'tasks') return execTasks(input);
       if (name === 'plaud') return execPlaud(input);
       if (name === 'mail') return execMail(input);
       if (name === 'usage') return execUsage(input);
@@ -3943,9 +3987,11 @@
   // The morning briefing now carries The Grunt's day-close report - what got completed and
   // what is still owed - and is delivered by voice so he can listen instead of read.
   function runBriefing() {
-    return Promise.all([fetchDayReport(), fetchUsage()]).then(function (both) {
+    var tasksP = DESKTOP ? fetchTasks({ action: 'list' }).catch(function () { return null; }) : Promise.resolve(null);
+    return Promise.all([fetchDayReport(), fetchUsage(), tasksP]).then(function (both) {
       var rep = both[0];
       var usage = describeUsage(both[1]);
+      var mine = both[2] && both[2].openCount ? describeTasks(both[2]) : '';
       var facts = describeDayReport(rep);
       var prompt = 'Give me my daily briefing.';
       if (facts) {
@@ -3958,6 +4004,10 @@
       } else {
         prompt += '\n\nThere is no end-of-day report from The Grunt, so say briefly that there ' +
                   'is nothing logged from the VDI rather than guessing at what happened.';
+      }
+      if (mine) {
+        prompt += '\n\nHis own action list (SEPARATE from The Grunt backlog above - do not merge them):\n' +
+                  mine + '\n\nRun through what is on his list, briefly.';
       }
       if (usage) {
         prompt += '\n\nHis usage:\n' + usage +
