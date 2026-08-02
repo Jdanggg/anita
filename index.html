@@ -1307,6 +1307,23 @@
     return out.join('\n');
   }
 
+  function execVdi(input) {
+    if (!DESKTOP) {
+      return Promise.resolve('The VDI claim lives on the PC, which the phone cannot reach. Ask on a PC, or text her there.');
+    }
+    var a = (input && input.action) || 'status';
+    if (a === 'handoff' && !(input && input.note)) {
+      return Promise.resolve('A handoff needs a note saying what state the work is actually in - ' +
+        'the next Grunt cannot see the screen. Ask him what to put, then call this again.');
+    }
+    return fetch('/vdi', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: a, note: (input && input.note) || '', to: (input && input.to) || '' })
+    }).then(function (r) { return r.text(); })
+      .catch(function (e) { return 'Could not reach the VDI claim: ' + e.message; });
+  }
+
   function execTasks(input) {
     if (!DESKTOP) {
       return Promise.resolve('His action list lives on the PC, which the phone cannot reach. Ask on a PC, or text her there.');
@@ -3105,6 +3122,13 @@
           in_minutes: { type: 'number' },
           at: { type: 'string' }
         }, required: ['action'] } },
+      { name: 'vdi',
+        description: "Who owns the VDI, and moving a project between Grunt machines. A Horizon desktop is single-session, so only one Grunt can work on it at a time. action='status' says who holds it and whether a handoff is waiting. action='handoff' puts the current work down for another machine to pick up - REQUIRES a note describing what state the work is actually in, because the next Grunt cannot see the screen; ask Johnny what to say if you do not know. action='accept' picks up work another machine left. Use when he says he is shutting a machine down, moving to the other one, or asks who is on the VDI. You cannot force past a live claim - if it refuses, say so and tell him why rather than working around it.",
+        input_schema: { type: 'object', properties: {
+          action: { type: 'string', enum: ['status', 'handoff', 'accept'] },
+          note:   { type: 'string' },
+          to:     { type: 'string' }
+        }, required: ['action'] } },
       { name: 'move_window',
         description: "Move Anita's own window between displays. screen='letterbox' puts her on the wide short panel (the DK-QUAKE 1920x480 or the 2560x720 beside it), 'primary' brings her back to the main monitor. Use when he asks you to move to the panel, the Quake screen, the little screen, or to come back.",
         input_schema: { type: 'object', properties: {
@@ -3431,6 +3455,7 @@
       if (name === 'weather') return execWeather(input);
       if (name === 'timer') return execTimer(input);
       if (name === 'reminders') return execReminders(input);
+      if (name === 'vdi') return execVdi(input);
       if (name === 'move_window') {
         if (!DESKTOP) return Promise.resolve('Moving windows only works on the PC.');
         return fetch('/move-window', { method: 'POST', headers: { 'Content-Type': 'application/json' },
