@@ -540,6 +540,7 @@
   <input id="textIn" type="text" placeholder="Ask anything — or click the sun / press Space to talk…" autocomplete="off">
   <button class="cbtn" id="micBtn" title="Talk (Space)">🎙</button>
   <button class="cbtn" id="stopBtn" title="Stop her talking" style="display:none; color: var(--err); font-size: 16px; padding: 0 14px">⏹</button>
+  <button class="cbtn" id="muteBtn" title="Turn off her voice (meetings)">🔈 Voice</button>
   <button class="cbtn" id="screenBtn" title="Share your screen with Anita">🖥</button>
   <button class="cbtn" id="autoBtn" title="Auto-listen: keep the conversation going hands-free">↻ Auto</button>
   <button class="cbtn" id="wakeBtn" title="Wake word — say “Anita” to summon her hands-free">👂 Wake</button>
@@ -603,6 +604,11 @@
       <option value="claude-sonnet-5">Sonnet 5 — faster, cheaper, higher rate limits</option>
     </select>
     <div class="hint">Sonnet is great for games and casual chat; Opus for the hard stuff. Applies from your next message.</div>
+  </div>
+  <div class="field">
+    <label>Speaking volume: <span id="volVal">100%</span></label>
+    <input type="range" id="vol" min="0.1" max="1" step="0.05" value="1">
+    <div class="hint">If she is quiet on a phone, raise this AND turn up the phone's media volume while she is talking — iOS keeps a separate level for media.</div>
   </div>
   <div class="field">
     <label>Speech rate: <span id="rateVal">1.0</span></label>
@@ -787,6 +793,10 @@
     setElModel: function (v) { localStorage.setItem('friday_el_model', v); },
     getSttOn:  function () { return localStorage.getItem('friday_stt_on') === '1'; },
     setSttOn:  function (v) { localStorage.setItem('friday_stt_on', v ? '1' : '0'); },
+    getVolume: function () { var v = parseFloat(localStorage.getItem('friday_volume')); return isNaN(v) ? 1 : v; },
+    setVolume: function (v) { localStorage.setItem('friday_volume', String(v)); },
+    getMute:   function () { return localStorage.getItem('friday_mute') === '1'; },
+    setMute:   function (v) { localStorage.setItem('friday_mute', v ? '1' : '0'); },
     getSys:    function () { return localStorage.getItem('friday_sys') || DEFAULT_SYSTEM; },
     setSys:    function (v) { localStorage.setItem('friday_sys', v); },
     getCity:   function () { return localStorage.getItem('friday_city') || ''; },
@@ -2919,17 +2929,25 @@
   var elUnlocked = false;
   var elWarned = false;          // only nag once per session if it fails
 
+  var EL_SILENCE = 'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA//tAwAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAACAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDA//////////////////////////8AAAAATGF2YzU4LjU0AAAAAAAAAAAAAAAAJAAAAAAAAAAAASDs90hvAAAAAAAAAAAAAAAAAAAA//sQxAADwAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==';
   function elUnlock() {
     if (elUnlocked) return;
     elUnlocked = true;
     try {
-      // a few milliseconds of silence, played during the tap that called us
-      elAudio.src = 'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA//tAwAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAACAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDA//////////////////////////8AAAAATGF2YzU4LjU0AAAAAAAAAAAAAAAAJAAAAAAAAAAAASDs90hvAAAAAAAAAAAAAAAAAAAA//sQxAADwAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==';
+      // a moment of silence, played during the tap that called us
+      elAudio.src = EL_SILENCE;
       elAudio.volume = 0;
+      var done = function () {
+        // Only stop it if the SILENT clip is still loaded. Without this guard a slow
+        // callback pauses whatever she is actually saying by the time it fires.
+        if (elAudio.currentSrc === EL_SILENCE || elAudio.src === EL_SILENCE) {
+          try { elAudio.pause(); } catch (e) {}
+        }
+        elAudio.volume = store.getVolume();
+      };
       var pr = elAudio.play();
-      if (pr && pr.then) pr.then(function () { elAudio.pause(); elAudio.volume = 1; }).catch(function () { elAudio.volume = 1; });
-      else { elAudio.pause(); elAudio.volume = 1; }
-    } catch (e) { elAudio.volume = 1; }
+      if (pr && pr.then) pr.then(done).catch(done); else done();
+    } catch (e) { elAudio.volume = store.getVolume(); }
   }
   // Any tap or click counts - the composer buttons, the seal, a Config button.
   document.addEventListener('touchend', elUnlock, { passive: true });
@@ -2974,6 +2992,7 @@
       return new Promise(function (resolve) {
         var src = URL.createObjectURL(blob);
         elAudio.src = src;
+        elAudio.volume = store.getVolume();
         elAudio.playbackRate = Math.min(1.6, Math.max(0.7, store.getRate()));
         elAudio.onended = function () { URL.revokeObjectURL(src); resolve({ ok: true }); };
         elAudio.onerror = function () { URL.revokeObjectURL(src); resolve({ ok: false, reason: 'the audio could not be decoded' }); };
@@ -2999,6 +3018,7 @@
     if ($('stopBtn')) $('stopBtn').style.display = speaking ? '' : 'none';
   }
   function enqueueSpeech(text) {
+    if (store.getMute()) return;        // meeting mode: she types, she does not talk
     if (muteTurn) return;               // user pressed ⏹ — stay quiet until the next turn
     var t = cleanForSpeech(text);
     if (!t || !synth) return;
@@ -3026,6 +3046,7 @@
       if (v) u.voice = v;
       u.rate = store.getRate();
       u.pitch = store.getPitch();
+      u.volume = store.getVolume();
       u.onend = speakNext;
       u.onerror = speakNext;
       synth.speak(u);
@@ -3680,6 +3701,21 @@
   function toggleMic() { if (listening) stopListening(); else startListening(); }
   orbWrap.onclick = toggleMic;
   micBtn.onclick = toggleMic;
+  function updMuteBtn() {
+    var b = $('muteBtn');
+    if (!b) return;
+    var m = store.getMute();
+    b.classList.toggle('active', m);
+    b.textContent = m ? '\uD83D\uDD07 Muted' : '\uD83D\uDD08 Voice';
+    b.title = m ? 'Voice replies are off \u2014 tap to let her speak again' : 'Turn off her voice (meetings)';
+  }
+  if ($('muteBtn')) $('muteBtn').onclick = function () {
+    var m = !store.getMute();
+    store.setMute(m);
+    if (m) { stopSpeaking(); addMsg('sys', 'Voice off \u2014 she will reply in text until you turn it back on.'); }
+    else { addMsg('sys', 'Voice back on.'); }
+    updMuteBtn();
+  };
   if ($('stopBtn')) $('stopBtn').onclick = function () {
     muteTurn = true;                    // silence anything else this turn streams in
     stopSpeaking();
@@ -3742,6 +3778,11 @@
 
   $('settingsBtn').onclick = function () { $('settings').classList.toggle('open'); };
   $('rate').oninput = function (e) { $('rateVal').textContent = (+e.target.value).toFixed(2); };
+  if ($('vol')) $('vol').oninput = function (e) {
+    $('volVal').textContent = Math.round(+e.target.value * 100) + '%';
+    store.setVolume(parseFloat(e.target.value));      // live, so you can hear it while dragging
+    elAudio.volume = store.getVolume();
+  };
   if ($('pitch')) $('pitch').oninput = function (e) { $('pitchVal').textContent = (+e.target.value).toFixed(2); };
   if ($('voiceAll')) $('voiceAll').onchange = loadVoices;
   if ($('elLoad')) $('elLoad').onclick = function () {
@@ -3833,6 +3874,7 @@
     if ($('elVoice') && $('elVoice').value) store.setElVoice($('elVoice').value);
     if ($('elModel')) store.setElModel($('elModel').value);
     if ($('sttChk')) store.setSttOn($('sttChk').checked);
+    if ($('vol')) store.setVolume(parseFloat($('vol').value));
     store.setSys($('sysPrompt').value.trim() || DEFAULT_SYSTEM);
     store.setCity($('homeCity').value.trim());
     store.setTgTok($('tgToken').value.trim());
@@ -3866,6 +3908,8 @@
   if ($('elKey')) $('elKey').value = store.getElKey();
   if ($('elModel')) $('elModel').value = store.getElModel();
   if ($('sttChk')) $('sttChk').checked = store.getSttOn();
+  if ($('vol')) { $('vol').value = store.getVolume(); $('volVal').textContent = Math.round(store.getVolume() * 100) + '%'; }
+  updMuteBtn();
   if ($('elVoice') && store.getElVoice()) {
     var o = document.createElement('option');
     o.value = store.getElVoice();
