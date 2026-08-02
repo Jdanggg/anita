@@ -654,26 +654,11 @@
       <span class="hint" style="margin:0">daily spoken briefing at this time (blank = off; also texted if Telegram is on)</span>
     </div>
     <label class="chk" style="margin-top:8px"><input type="checkbox" id="briefVoiceChk" checked> send the briefing as an <b>audio file</b> in her voice</label>
-    <div class="hint" style="margin-top:4px">It includes The Grunt's end-of-day report: what was completed, what failed, and the highest-priority items still in the backlog.</div>
+    <div class="hint" style="margin-top:4px">Thirty minutes beforehand she asks The Grunt for a report on the <b>last 16 hours</b> and folds it in: what was completed, what failed, and the highest-priority items still outstanding. Sixteen hours rather than "yesterday" so work you leave running overnight is still counted. There is nothing to schedule — move this time and the report moves with it.</div>
   </div>
   <div class="field">
-    <label>Grunt day close</label>
-    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-      <input type="time" id="dayCloseTime" style="flex:0 0 110px; background:var(--surface); border:1px solid var(--edge); border-radius:10px; color:var(--ink); padding:8px 10px; font-family:inherit">
-      <span class="hint" style="margin:0">at this time The Grunt writes the day's report and refreshes its handoff package (blank = off)</span>
-    </div>
-  </div>
-  <div class="field">
-    <label>Yesterday's recap</label>
-    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-      <input type="time" id="recapTime" style="flex:0 0 110px; background:var(--surface); border:1px solid var(--edge); border-radius:10px; color:var(--ink); padding:8px 10px; font-family:inherit">
-      <button class="cbtn" id="recapNow" type="button" style="flex:0 0 auto; padding:0 14px">SEND NOW</button>
-      <span class="hint" style="margin:0">a recap of what was completed the previous day, sent to your phone (blank = off)</span>
-    </div>
-  </div>
-  <div class="field">
-    <label class="chk"><input type="checkbox" id="recapVoiceChk" checked> send it as a <b>voice note</b> in her voice</label>
-    <div class="hint" style="margin-top:4px">Needs the premium voice switched on. Telegram wants OGG/OPUS for a true voice bubble and there is no encoder on this PC, so it arrives as an inline audio player if the voice upload is refused. Unticked, or with the premium voice off, it comes as text.</div>
+    <label class="chk"><input type="checkbox" id="tgVoiceChk" checked> send an <b>audio clip in her voice</b> with every Telegram message</label>
+    <div class="hint" style="margin-top:4px">Applies to everything she sends you on Telegram, not just the briefing. The text rides along as the caption so you can read or listen. Needs the premium voice switched on; without it, or unticked, messages come as text. Each one is an ElevenLabs call, so untick it if you want to keep usage down.</div>
   </div>
   <div class="field">
     <label>Home city (weather, briefings &amp; the living theme)</label>
@@ -850,14 +835,11 @@
     setModel: function (v) { localStorage.setItem('friday_model', v); },
     getBrief: function () { return localStorage.getItem('friday_brief') || ''; },
     setBrief: function (v) { localStorage.setItem('friday_brief', v); },
-    getRecap: function () { return localStorage.getItem('friday_recap') || ''; },
-    setRecap: function (v) { localStorage.setItem('friday_recap', v); },
-    getRecapVoice: function () { return localStorage.getItem('friday_recap_voice') !== '0'; },
-    setRecapVoice: function (v) { localStorage.setItem('friday_recap_voice', v ? '1' : '0'); },
+    getTgVoice: function () { return localStorage.getItem('friday_tg_voice') !== '0'; },
+    setTgVoice: function (v) { localStorage.setItem('friday_tg_voice', v ? '1' : '0'); },
     getBriefVoice: function () { return localStorage.getItem('friday_brief_voice') !== '0'; },
     setBriefVoice: function (v) { localStorage.setItem('friday_brief_voice', v ? '1' : '0'); },
-    getDayClose: function () { return localStorage.getItem('friday_dayclose') || ''; },
-    setDayClose: function (v) { localStorage.setItem('friday_dayclose', v); }
+    getTgVoice2: function () { return store.getTgVoice(); }
   };
 
   // ---- file-backed settings (desktop) ----------------------------------------
@@ -1099,7 +1081,7 @@
       return sendToClaude(prompt, {
         hidden: true,
         viaTelegram: tgReady(),
-        asVoice: store.getRecapVoice()
+        asVoice: store.getTgVoice()
       });
     });
   }
@@ -1121,11 +1103,14 @@
     }).then(function (r) { return r.ok ? r.blob() : null; }).catch(function () { return null; });
   }
 
+  var TG_CAPTION_MAX = 1000;             // Telegram's limit is 1024; leave room
   function tgUpload(method, field, blob, caption) {
     var fd = new FormData();
     fd.append('chat_id', store.getTgChat());
-    fd.append(field, blob, 'recap.mp3');
-    if (caption) fd.append('caption', caption.slice(0, 1000));
+    fd.append(field, blob, 'anita.mp3');
+    // Only caption it if the whole thing fits. A caption cut off mid-sentence reads as a bug,
+    // so longer text is sent as its own message by the caller instead.
+    if (caption && caption.length <= TG_CAPTION_MAX) fd.append('caption', caption);
     return fetch('https://api.telegram.org/bot' + store.getTgTok() + '/' + method, {
       method: 'POST', body: fd
     }).then(function (r) { return r.json(); })
@@ -1137,15 +1122,29 @@
   function sendVoiceNote(text) {
     if (!tgReady()) return Promise.resolve('Telegram is not set up.');
     if (!store.getElOn() || !store.getElKey()) return sendTelegram(text);
-    return elFetchAudio(text).then(function (blob) {
-      if (!blob) return sendTelegram(text);
-      return tgUpload('sendVoice', 'voice', blob, text).then(function (ok) {
-        if (ok) return 'Voice note sent.';
-        return tgUpload('sendAudio', 'audio', blob, text).then(function (ok2) {
-          return ok2 ? 'Sent as an audio message.' : sendTelegram(text);
+    // Too long to ride as a caption: send the text first so nothing is lost, then the audio.
+    var long = text.length > TG_CAPTION_MAX;
+    var pre = long ? sendTelegram(text) : Promise.resolve(null);
+    return pre.then(function () {
+      return elFetchAudio(text).then(function (blob) {
+        if (!blob) return long ? 'Sent as text (voice unavailable).' : sendTelegram(text);
+        var cap = long ? '' : text;
+        return tgUpload('sendVoice', 'voice', blob, cap).then(function (ok) {
+          if (ok) return 'Voice note sent.';
+          return tgUpload('sendAudio', 'audio', blob, cap).then(function (ok2) {
+            if (ok2) return 'Sent as an audio message.';
+            return long ? 'Sent as text (audio upload refused).' : sendTelegram(text);
+          });
         });
       });
-    }).catch(function () { return sendTelegram(text); });
+    }).catch(function () { return long ? 'Sent as text.' : sendTelegram(text); });
+  }
+
+  // Every Telegram correspondence goes out in her voice unless he turns it off - her replies
+  // to his texts, and anything she sends with text_me. Falls back to plain text on its own.
+  function tgDeliver(text) {
+    if (store.getTgVoice() && store.getElOn() && store.getElKey()) return sendVoiceNote(text);
+    return sendTelegram(text);
   }
 
   window.ANITA = window.ANITA || {};
@@ -2992,7 +2991,7 @@
       if (name === 'send_briefing') return execSendBriefing(input);
       if (name === 'notes') return execNotes(input);
       if (name === 'random') return execRandom(input);
-      if (name === 'text_me') return sendTelegram(String(input.message || ''));
+      if (name === 'text_me') return tgDeliver(String(input.message || ''));
       if (name === 'memory') return execMemory(input);
       if (name === 'skills') return execSkills(input);
       if (name === 'send_email') return execEmail(input);
@@ -3754,21 +3753,9 @@
   window.ANITA = window.ANITA || {};
   window.ANITA.briefing = runBriefing;
 
-  // ---------- daily recap scheduler ----------
-  // Its own interval rather than sharing the briefing's: the briefing bails early when it is
-  // not configured, and folding a second job into that early return is how one silently
-  // stops firing.
-  setInterval(function () {
-    var at = store.getRecap();
-    if (!at || busy) return;
-    var now = new Date();
-    var hhmm = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
-    var today = now.toDateString();
-    if (hhmm === at && localStorage.getItem('friday_recap_last') !== today) {
-      localStorage.setItem('friday_recap_last', today);
-      runRecap();
-    }
-  }, 25000);
+  // The recap has NO schedule any more - the morning briefing already carries The Grunt's
+  // report, so a second scheduled delivery was the same content twice. runRecap() stays for
+  // when he asks for one by name.
 
   // ---------- session transcript (visual continuity across restarts) ----------
   function transcriptLoad() { try { return JSON.parse(localStorage.getItem('friday_transcript') || '[]'); } catch (e) { return []; } }
@@ -4000,7 +3987,7 @@
       }
       closeBubble();
       if (opts.viaTelegram && allText && tgReady()) {
-        if (opts.asVoice) sendVoiceNote(allText); else sendTelegram(allText);
+        if (opts.asVoice) sendVoiceNote(allText); else tgDeliver(allText);
       }
     } catch (err) {
       if (el && el.parentNode) el.parentNode.removeChild(el);
@@ -4214,10 +4201,8 @@
     if ($('tgOwnerChk')) store.setTgOwner($('tgOwnerChk').checked);
     store.setWake($('wakeChk').checked);
     store.setBrief($('briefTime').value || '');
-    if ($('recapTime')) store.setRecap($('recapTime').value || '');
-    if ($('recapVoiceChk')) store.setRecapVoice($('recapVoiceChk').checked);
     if ($('briefVoiceChk')) store.setBriefVoice($('briefVoiceChk').checked);
-    if ($('dayCloseTime')) store.setDayClose($('dayCloseTime').value || '');
+    if ($('tgVoiceChk')) store.setTgVoice($('tgVoiceChk').checked);
     if (DESKTOP && $('autoStartChk')) {
       sysCall({ action: 'autostart', enable: $('autoStartChk').checked }).then(function (r) { addMsg('sys', r); });
     }
@@ -4266,22 +4251,13 @@
   if ($('wakeChk')) $('wakeChk').checked = store.getWake();
   updWakeBtn();
   if ($('briefTime')) $('briefTime').value = store.getBrief();
-  if ($('recapTime')) $('recapTime').value = store.getRecap();
-  if ($('recapVoiceChk')) $('recapVoiceChk').checked = store.getRecapVoice();
+  if ($('tgVoiceChk')) $('tgVoiceChk').checked = store.getTgVoice();
   if ($('briefVoiceChk')) $('briefVoiceChk').checked = store.getBriefVoice();
-  if ($('dayCloseTime')) $('dayCloseTime').value = store.getDayClose();
   if ($('briefNow')) $('briefNow').onclick = function () {
     var b = $('briefNow');
     b.disabled = true; b.textContent = 'building...';
     runBriefing().then(function () { b.disabled = false; b.textContent = 'SEND NOW'; })
                  .catch(function () { b.disabled = false; b.textContent = 'SEND NOW'; });
-  };
-  if ($('recapNow')) $('recapNow').onclick = function () {
-    var b = $('recapNow');
-    b.disabled = true;
-    b.textContent = 'building...';
-    runRecap().then(function () { b.disabled = false; b.textContent = 'SEND NOW'; })
-              .catch(function () { b.disabled = false; b.textContent = 'SEND NOW'; });
   };
   updateIcloudUI();
   updateSpotifyUI();
