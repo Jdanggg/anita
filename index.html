@@ -654,6 +654,18 @@
     </div>
   </div>
   <div class="field">
+    <label>Yesterday's recap</label>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+      <input type="time" id="recapTime" style="flex:0 0 110px; background:var(--surface); border:1px solid var(--edge); border-radius:10px; color:var(--ink); padding:8px 10px; font-family:inherit">
+      <button class="cbtn" id="recapNow" type="button" style="flex:0 0 auto; padding:0 14px">SEND NOW</button>
+      <span class="hint" style="margin:0">a recap of what was completed the previous day, sent to your phone (blank = off)</span>
+    </div>
+  </div>
+  <div class="field">
+    <label class="chk"><input type="checkbox" id="recapVoiceChk" checked> send it as a <b>voice note</b> in her voice</label>
+    <div class="hint" style="margin-top:4px">Needs the premium voice switched on. Telegram wants OGG/OPUS for a true voice bubble and there is no encoder on this PC, so it arrives as an inline audio player if the voice upload is refused. Unticked, or with the premium voice off, it comes as text.</div>
+  </div>
+  <div class="field">
     <label>Home city (weather, briefings &amp; the living theme)</label>
     <input type="text" id="homeCity" placeholder="e.g. Dublin, CA" autocomplete="off">
     <div class="hint">Use "City, State" for US cities with famous twins — "Dublin, CA" finds California, not Ireland. The interface follows your city's real sunrise, sunset, and current weather.</div>
@@ -827,7 +839,11 @@
     getModel: function () { return localStorage.getItem('friday_model') || 'claude-opus-4-8'; },
     setModel: function (v) { localStorage.setItem('friday_model', v); },
     getBrief: function () { return localStorage.getItem('friday_brief') || ''; },
-    setBrief: function (v) { localStorage.setItem('friday_brief', v); }
+    setBrief: function (v) { localStorage.setItem('friday_brief', v); },
+    getRecap: function () { return localStorage.getItem('friday_recap') || ''; },
+    setRecap: function (v) { localStorage.setItem('friday_recap', v); },
+    getRecapVoice: function () { return localStorage.getItem('friday_recap_voice') !== '0'; },
+    setRecapVoice: function (v) { localStorage.setItem('friday_recap_voice', v ? '1' : '0'); }
   };
 
   // ---- file-backed settings (desktop) ----------------------------------------
@@ -941,6 +957,134 @@
       return j.ok ? 'Message sent to the user\'s phone.' : ('Telegram error: ' + (j.description || 'unknown'));
     }).catch(function (e) { return 'Telegram error: ' + e.message; });
   }
+  // ---------- daily recap: what actually got done yesterday ----------
+
+  // "The previous day" means the calendar day before the one we are in, so a recap at
+  // 08:00 today covers all of yesterday and nothing of this morning.
+  function recapDayBounds() {
+    var d = new Date();
+    d.setHours(0, 0, 0, 0);
+    var end = d.getTime();
+    return { start: end - 86400000, end: end, label: new Date(end - 86400000).toDateString() };
+  }
+
+  // Pull the facts from every source that records work: The Grunt's run log (desktop only -
+  // the phone cannot reach the launcher), plus her own notes and reminders.
+  function gatherRecap() {
+    var b = recapDayBounds();
+    var lines = [];
+    try {
+      var notes = JSON.parse(localStorage.getItem('friday_notes') || '[]');
+      var n = notes.filter(function (x) { return x.t >= b.start && x.t < b.end; });
+      if (n.length) lines.push('Notes he dictated: ' + n.map(function (x) { return x.text; }).join(' | '));
+    } catch (e) {}
+    try {
+      var rs = JSON.parse(localStorage.getItem('friday_reminders') || '[]');
+      var r = rs.filter(function (x) { return x.due && x.due >= b.start && x.due < b.end; });
+      if (r.length) lines.push('Reminders that came due: ' + r.map(function (x) {
+        return x.text + (x.done ? ' (done)' : ' (never marked done)');
+      }).join(' | '));
+    } catch (e) {}
+
+    var p = Promise.resolve(null);
+    if (DESKTOP) {
+      p = fetch('/agent-runs', { cache: 'no-store' })
+            .then(function (r) { return r.json(); })
+            .catch(function () { return null; });
+    }
+    return p.then(function (runs) {
+      if (runs && runs.length) {
+        var done = runs.filter(function (x) {
+          var t = x.finishedAt ? Date.parse(x.finishedAt) : 0;
+          return t >= b.start && t < b.end;
+        });
+        if (done.length) lines.push('Power BI runs that finished: ' + done.map(function (x) {
+          return x.workflow + ' on ' + (x.target || 'no target named') + ' - ' + x.status +
+                 (x.durationMin ? ', ' + x.durationMin + ' minutes' : '') +
+                 (x.summary ? '. ' + x.summary : '');
+        }).join(' | '));
+        // A run still "running" from a previous day did not finish - that is news, not noise.
+        var stuck = runs.filter(function (x) {
+          return x.status === 'running' && x.startedAt && Date.parse(x.startedAt) < b.end;
+        });
+        if (stuck.length) lines.push('Still showing as running from before today (so they never finished): ' +
+          stuck.map(function (x) { return x.runId; }).join(', '));
+      }
+      return { label: b.label, body: lines.join('\n') };
+    });
+  }
+
+  function runRecap() {
+    return gatherRecap().then(function (d) {
+      var prompt;
+      if (!d.body) {
+        prompt = 'Write a very short spoken recap for ' + d.label + '. Nothing was logged that day - ' +
+                 'no Power BI runs finished, no notes, no reminders came due. Say that plainly in one ' +
+                 'or two sentences without inventing anything or padding it out.';
+      } else {
+        prompt = 'Here is the raw log of what happened on ' + d.label + ':\n' + d.body +
+                 '\n\nWrite a short spoken recap of it for Johnny - what got completed, anything that ' +
+                 'failed or was left hanging, and what deserves his attention. It will be read aloud as ' +
+                 'a voice note, so write plain spoken sentences: no markdown, no bullet points, no ' +
+                 'headings, no emoji. Keep it under about 120 words. Stick strictly to the log above - ' +
+                 'do not invent work that is not in it.';
+      }
+      addMsg('sys', '\uD83D\uDDD2 daily recap for ' + d.label);
+      return sendToClaude(prompt, {
+        hidden: true,
+        viaTelegram: tgReady(),
+        asVoice: store.getRecapVoice()
+      });
+    });
+  }
+
+  // Fetch her voice as a blob without playing it - elSpeak() both fetches AND plays, which
+  // is wrong here: the recap is for his phone, not for whoever is standing at the PC.
+  function elFetchAudio(text) {
+    var key = store.getElKey(), voice = store.getElVoice();
+    if (!key || !voice) return Promise.resolve(null);
+    return fetch('https://api.elevenlabs.io/v1/text-to-speech/' + encodeURIComponent(voice) +
+                 '?output_format=mp3_44100_128', {
+      method: 'POST',
+      headers: { 'xi-api-key': key, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+      body: JSON.stringify({
+        text: text,
+        model_id: store.getElModel(),
+        voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true }
+      })
+    }).then(function (r) { return r.ok ? r.blob() : null; }).catch(function () { return null; });
+  }
+
+  function tgUpload(method, field, blob, caption) {
+    var fd = new FormData();
+    fd.append('chat_id', store.getTgChat());
+    fd.append(field, blob, 'recap.mp3');
+    if (caption) fd.append('caption', caption.slice(0, 1000));
+    return fetch('https://api.telegram.org/bot' + store.getTgTok() + '/' + method, {
+      method: 'POST', body: fd
+    }).then(function (r) { return r.json(); })
+      .then(function (j) { return !!(j && j.ok); })
+      .catch(function () { return false; });
+  }
+
+  // sendVoice -> sendAudio -> plain text. Each fallback still delivers the briefing.
+  function sendVoiceNote(text) {
+    if (!tgReady()) return Promise.resolve('Telegram is not set up.');
+    if (!store.getElOn() || !store.getElKey()) return sendTelegram(text);
+    return elFetchAudio(text).then(function (blob) {
+      if (!blob) return sendTelegram(text);
+      return tgUpload('sendVoice', 'voice', blob, text).then(function (ok) {
+        if (ok) return 'Voice note sent.';
+        return tgUpload('sendAudio', 'audio', blob, text).then(function (ok2) {
+          return ok2 ? 'Sent as an audio message.' : sendTelegram(text);
+        });
+      });
+    }).catch(function () { return sendTelegram(text); });
+  }
+
+  window.ANITA = window.ANITA || {};
+  window.ANITA.recap = runRecap;          // window.ANITA.recap() to fire one on demand
+
   function tgDetectChat() {
     var tok = $('tgToken').value.trim();
     if (!tok) { $('tgHint').textContent = 'Paste the bot token first (from @BotFather).'; return; }
@@ -3481,6 +3625,22 @@
     }
   }, 25000);
 
+  // ---------- daily recap scheduler ----------
+  // Its own interval rather than sharing the briefing's: the briefing bails early when it is
+  // not configured, and folding a second job into that early return is how one silently
+  // stops firing.
+  setInterval(function () {
+    var at = store.getRecap();
+    if (!at || busy) return;
+    var now = new Date();
+    var hhmm = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+    var today = now.toDateString();
+    if (hhmm === at && localStorage.getItem('friday_recap_last') !== today) {
+      localStorage.setItem('friday_recap_last', today);
+      runRecap();
+    }
+  }, 25000);
+
   // ---------- session transcript (visual continuity across restarts) ----------
   function transcriptLoad() { try { return JSON.parse(localStorage.getItem('friday_transcript') || '[]'); } catch (e) { return []; } }
   function transcriptPush(role, text) {
@@ -3710,7 +3870,9 @@
         enqueueSpeech(note);
       }
       closeBubble();
-      if (opts.viaTelegram && allText && tgReady()) sendTelegram(allText);
+      if (opts.viaTelegram && allText && tgReady()) {
+        if (opts.asVoice) sendVoiceNote(allText); else sendTelegram(allText);
+      }
     } catch (err) {
       if (el && el.parentNode) el.parentNode.removeChild(el);
       if (history.length && history[history.length - 1].role === 'user' &&
@@ -3923,6 +4085,8 @@
     if ($('tgOwnerChk')) store.setTgOwner($('tgOwnerChk').checked);
     store.setWake($('wakeChk').checked);
     store.setBrief($('briefTime').value || '');
+    if ($('recapTime')) store.setRecap($('recapTime').value || '');
+    if ($('recapVoiceChk')) store.setRecapVoice($('recapVoiceChk').checked);
     if (DESKTOP && $('autoStartChk')) {
       sysCall({ action: 'autostart', enable: $('autoStartChk').checked }).then(function (r) { addMsg('sys', r); });
     }
@@ -3971,6 +4135,15 @@
   if ($('wakeChk')) $('wakeChk').checked = store.getWake();
   updWakeBtn();
   if ($('briefTime')) $('briefTime').value = store.getBrief();
+  if ($('recapTime')) $('recapTime').value = store.getRecap();
+  if ($('recapVoiceChk')) $('recapVoiceChk').checked = store.getRecapVoice();
+  if ($('recapNow')) $('recapNow').onclick = function () {
+    var b = $('recapNow');
+    b.disabled = true;
+    b.textContent = 'building...';
+    runRecap().then(function () { b.disabled = false; b.textContent = 'SEND NOW'; })
+              .catch(function () { b.disabled = false; b.textContent = 'SEND NOW'; });
+  };
   updateIcloudUI();
   updateSpotifyUI();
   spPlayerInit();
