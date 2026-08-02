@@ -622,6 +622,8 @@
       <option value="eleven_flash_v2_5">Flash — fastest, lowest latency</option>
       <option value="eleven_multilingual_v2">Multilingual v2 — richest, slower and pricier</option>
     </select>
+    <label class="chk" style="margin-top:8px"><input type="checkbox" id="sttChk"> listen via ElevenLabs too — <b>fixes voice input on iPhone</b></label>
+    <div class="hint" style="margin-top:4px">Safari's own speech recognition usually fails in a home-screen app. This records instead and transcribes. The key needs <b>Speech to Text → Access</b> enabled at elevenlabs.io. Tap the mic to start, tap again when you are done.</div>
     <div class="hint" id="elHint">Get a key at elevenlabs.io → Profile → API Keys. Press LOAD to list your voices. Works on the phone too, and sounds identical on both. If it ever fails she falls back to the device voice on her own.</div>
   </div>
   <div class="field">
@@ -783,6 +785,8 @@
     setElVoice: function (v) { localStorage.setItem('friday_el_voice', v); },
     getElModel: function () { return localStorage.getItem('friday_el_model') || 'eleven_turbo_v2_5'; },
     setElModel: function (v) { localStorage.setItem('friday_el_model', v); },
+    getSttOn:  function () { return localStorage.getItem('friday_stt_on') === '1'; },
+    setSttOn:  function (v) { localStorage.setItem('friday_stt_on', v ? '1' : '0'); },
     getSys:    function () { return localStorage.getItem('friday_sys') || DEFAULT_SYSTEM; },
     setSys:    function (v) { localStorage.setItem('friday_sys', v); },
     getCity:   function () { return localStorage.getItem('friday_city') || ''; },
@@ -3052,6 +3056,83 @@
   }
 
   // ---------- Speech recognition ----------
+  // ---------- listening via ElevenLabs (the iPhone path) ----------
+  // Safari's own speech recognition is unreliable on iOS and usually dead inside a
+  // home-screen app. Recording and transcribing avoids Apple's engine entirely.
+  var mediaRec = null, sttChunks = [], sttStream = null;
+
+  function sttAvailable() { return !!(store.getElKey() && navigator.mediaDevices && window.MediaRecorder); }
+  function useStt() { return sttAvailable() && (store.getSttOn() || !(window.SpeechRecognition || window.webkitSpeechRecognition)); }
+
+  function sttStart() {
+    if (mediaRec) return;
+    setState('idle', 'allow microphone…');
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      sttStream = stream;
+      sttChunks = [];
+      try { mediaRec = new MediaRecorder(stream); }
+      catch (e) { setError('This browser cannot record audio: ' + e.message); sttCleanup(); return; }
+      mediaRec.ondataavailable = function (ev) { if (ev.data && ev.data.size) sttChunks.push(ev.data); };
+      mediaRec.onstop = sttTranscribe;
+      mediaRec.start();
+      listening = true;
+      micBtn.classList.add('active');
+      duckSpotify();
+      setState('listening', 'listening — tap the mic again when done');
+    }).catch(function (e) {
+      var denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+      setError(denied
+        ? 'Microphone permission was refused. On iPhone: Settings → Safari → Microphone → Allow, then reload.'
+        : 'Could not open the microphone: ' + (e.message || e));
+      sttCleanup();
+    });
+  }
+
+  function sttStopRecording() {
+    if (!mediaRec) return;
+    try { mediaRec.stop(); } catch (e) {}
+    listening = false;
+    micBtn.classList.remove('active');
+    setState('thinking', 'transcribing…');
+  }
+
+  function sttCleanup() {
+    if (sttStream) { try { sttStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} }
+    sttStream = null; mediaRec = null;
+    listening = false;
+    micBtn.classList.remove('active');
+  }
+
+  function sttTranscribe() {
+    var type = (mediaRec && mediaRec.mimeType) || 'audio/mp4';
+    var blob = new Blob(sttChunks, { type: type });
+    sttCleanup();
+    if (!blob.size) { setState('idle'); return; }
+    var ext = /mp4|m4a/.test(type) ? 'm4a' : /webm/.test(type) ? 'webm' : /ogg/.test(type) ? 'ogg' : 'wav';
+    var fd = new FormData();
+    fd.append('file', blob, 'speech.' + ext);
+    fd.append('model_id', 'scribe_v1');
+    fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+      method: 'POST', headers: { 'xi-api-key': store.getElKey() }, body: fd
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          throw new Error(r.status === 401
+            ? 'the key is not allowed to transcribe — enable Speech to Text on it at elevenlabs.io'
+            : 'HTTP ' + r.status + (t && t.length < 160 ? ' — ' + t : ''));
+        });
+      }
+      return r.json();
+    }).then(function (j) {
+      var text = (j && (j.text || j.transcript) || '').trim();
+      if (!text) { setState('idle', 'did not catch that'); return; }
+      lastInputWasVoice = true;
+      sendToClaude(text);
+    }).catch(function (e) {
+      setError('Could not transcribe: ' + (e.message || e));
+    });
+  }
+
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var rec = null, listening = false;
 
@@ -3093,7 +3174,9 @@
     rec.onerror = function (e) {
       listening = false;
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        setError('Microphone blocked. Click the lock/mic icon in the title bar, set Microphone to Allow, then try again.');
+        setError(useStt() || !sttAvailable()
+          ? 'Microphone blocked. Allow it for this site, then try again.'
+          : "Safari refused the microphone. On iPhone this is common in a home-screen app \u2014 turn on 'Listen via ElevenLabs' in Config and it will record instead.");
       } else if (e.error === 'network') {
         setError('Speech service unreachable — voice input needs an internet connection.');
       } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
@@ -3125,7 +3208,19 @@
     });
   }
   function startListening() {
-    if (!rec) { setError("Voice input isn't available in this webview — typing still works."); return; }
+    if (useStt()) {                       // record + transcribe (the reliable path on iOS)
+      if (listening || busy) return;
+      stopSpeaking();
+      wakeStop();
+      sttStart();
+      return;
+    }
+    if (!rec) {
+      setError(sttAvailable()
+        ? "This browser has no speech recognition. Turn on 'Listen via ElevenLabs' in Config."
+        : "Voice input isn't available here — typing still works.");
+      return;
+    }
     if (listening || busy) return;
     stopSpeaking();
     wakeStop();
@@ -3141,6 +3236,7 @@
     });
   }
   function stopListening() {
+    if (mediaRec) { sttStopRecording(); return; }   // finishes and transcribes
     if (rec && listening) { try { rec.stop(); } catch (e) {} }
     listening = false;
     micBtn.classList.remove('active');
@@ -3736,6 +3832,7 @@
     if ($('elKey')) store.setElKey($('elKey').value.trim());
     if ($('elVoice') && $('elVoice').value) store.setElVoice($('elVoice').value);
     if ($('elModel')) store.setElModel($('elModel').value);
+    if ($('sttChk')) store.setSttOn($('sttChk').checked);
     store.setSys($('sysPrompt').value.trim() || DEFAULT_SYSTEM);
     store.setCity($('homeCity').value.trim());
     store.setTgTok($('tgToken').value.trim());
@@ -3768,6 +3865,7 @@
   if ($('elOnChk')) $('elOnChk').checked = store.getElOn();
   if ($('elKey')) $('elKey').value = store.getElKey();
   if ($('elModel')) $('elModel').value = store.getElModel();
+  if ($('sttChk')) $('sttChk').checked = store.getSttOn();
   if ($('elVoice') && store.getElVoice()) {
     var o = document.createElement('option');
     o.value = store.getElVoice();
