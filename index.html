@@ -1097,6 +1097,23 @@
     return out.join('\n');
   }
 
+  function execPlaud(input) {
+    if (!DESKTOP) {
+      return Promise.resolve('His Plaud recordings are read through the CLI on the PC, which the phone cannot reach. Ask on a PC.');
+    }
+    return fetch('/plaud', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input || { action: 'recent' })
+    }).then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j) return 'No answer from Plaud.';
+        if (j.error) return j.error;
+        return j.output || 'Plaud returned nothing for that.';
+      })
+      .catch(function (e) { return 'Could not reach Plaud: ' + e.message; });
+  }
+
   function execMail(input) {
     if (!DESKTOP) {
       return Promise.resolve('His mailbox is read through Outlook on the PC, which the phone cannot reach. Ask on a PC.');
@@ -2842,6 +2859,17 @@
           in_minutes: { type: 'number' },
           at: { type: 'string' }
         }, required: ['action'] } },
+      { name: 'plaud',
+        description: "Johnny's Plaud voice recorder: meetings, notes and calls he has recorded, with transcripts and Plaud's own AI summaries. action='today' for today's recordings, 'recent' (optional days, default 7), 'files' for the most recent regardless of date, 'search' with query (and optional from/to dates as YYYY-MM-DD) to find a recording by what was said in it, 'transcript' with id for the full timestamped text, 'summary' with id for Plaud's summary. Listings include the recording id - take it from there and pass it to transcript or summary. When he asks you to summarise a meeting or catch him up on what was said, search or list first to find the right recording, then pull the transcript and write your own summary rather than just repeating Plaud's.",
+        input_schema: { type: 'object', properties: {
+          action: { type: 'string', enum: ['today', 'recent', 'files', 'search', 'transcript', 'summary'] },
+          query:  { type: 'string' },
+          id:     { type: 'string' },
+          days:   { type: 'number' },
+          from:   { type: 'string' },
+          to:     { type: 'string' },
+          limit:  { type: 'number' }
+        }, required: ['action'] } },
       { name: 'mail',
         description: "Read Johnny's Outlook mailbox (read-only; you cannot delete, move or send from here - use send_email for sending). action='unread' for what he has not read, 'search' to find messages by words in the subject, body or sender, 'read' for the full text of one message using an id from a previous result, 'folders' to list folders with their counts. Optional: folder (default Inbox - try Sent Items, Archive, Junk Email), days to limit how far back, from to filter by sender name, limit (default 15, max 50). Results give a 400-character preview; call 'read' with the id when you need the whole thing.",
         input_schema: { type: 'object', properties: {
@@ -3143,6 +3171,7 @@
       if (name === 'weather') return execWeather(input);
       if (name === 'timer') return execTimer(input);
       if (name === 'reminders') return execReminders(input);
+      if (name === 'plaud') return execPlaud(input);
       if (name === 'mail') return execMail(input);
       if (name === 'usage') return execUsage(input);
       if (name === 'send_briefing') return execSendBriefing(input);
