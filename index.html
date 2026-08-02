@@ -2926,6 +2926,22 @@
   // programmatically forever, which is what makes her speak hands-free on a phone.
   var elAudio = new Audio();
   elAudio.preload = 'auto';
+
+  // Hand the media session back. Without this she sits on the iOS lock screen with
+  // transport controls and holds media focus, so the music app cannot take it back.
+  function elRelease() {
+    try {
+      elAudio.pause();
+      elAudio.removeAttribute('src');
+      elAudio.load();                       // detaches the source; element stays unlocked
+    } catch (e) {}
+    try {
+      if (navigator.mediaSession) {
+        navigator.mediaSession.playbackState = 'none';
+        navigator.mediaSession.metadata = null;
+      }
+    } catch (e) {}
+  }
   var elUnlocked = false;
   var elWarned = false;          // only nag once per session if it fails
 
@@ -2938,10 +2954,10 @@
       elAudio.src = EL_SILENCE;
       elAudio.volume = 0;
       var done = function () {
-        // Only stop it if the SILENT clip is still loaded. Without this guard a slow
-        // callback pauses whatever she is actually saying by the time it fires.
+        // Only clear it if the SILENT clip is still loaded. Without this guard a slow
+        // callback stops whatever she is actually saying by the time it fires.
         if (elAudio.currentSrc === EL_SILENCE || elAudio.src === EL_SILENCE) {
-          try { elAudio.pause(); } catch (e) {}
+          elRelease();                       // and do not linger in Now Playing
         }
         elAudio.volume = store.getVolume();
       };
@@ -2994,12 +3010,13 @@
         elAudio.src = src;
         elAudio.volume = store.getVolume();
         elAudio.playbackRate = Math.min(1.6, Math.max(0.7, store.getRate()));
-        elAudio.onended = function () { URL.revokeObjectURL(src); resolve({ ok: true }); };
-        elAudio.onerror = function () { URL.revokeObjectURL(src); resolve({ ok: false, reason: 'the audio could not be decoded' }); };
+        elAudio.onended = function () { URL.revokeObjectURL(src); elRelease(); resolve({ ok: true }); };
+        elAudio.onerror = function () { URL.revokeObjectURL(src); elRelease(); resolve({ ok: false, reason: 'the audio could not be decoded' }); };
         var pr = elAudio.play();
         if (pr && pr.catch) {
           pr.catch(function (e) {
             URL.revokeObjectURL(src);
+            elRelease();
             var blocked = e && (e.name === 'NotAllowedError' || /gesture|user activation|interact/i.test(String(e.message || '')));
             resolve({ ok: false, reason: blocked
               ? 'the browser blocked playback \u2014 tap anywhere in the app once, then try again'
@@ -3066,7 +3083,7 @@
     speaking = false;
     updStopBtn();
     if (synth) synth.cancel();
-    try { elAudio.pause(); elAudio.currentTime = 0; } catch (e) {}
+    elRelease();
   }
   function runGoodnight() {
     goodnightArmed = false;
