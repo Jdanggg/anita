@@ -2929,7 +2929,17 @@
 
   // Hand the media session back. Without this she sits on the iOS lock screen with
   // transport controls and holds media focus, so the music app cannot take it back.
+  var elReleaseTimer = null;
+
+  // Let go a few seconds after she actually stops, not between sentences of one reply.
+  function elReleaseSoon() {
+    clearTimeout(elReleaseTimer);
+    elReleaseTimer = setTimeout(elRelease, 3000);
+  }
+  function elKeepSession() { clearTimeout(elReleaseTimer); }
+
   function elRelease() {
+    clearTimeout(elReleaseTimer);
     try {
       elAudio.pause();
       elAudio.removeAttribute('src');
@@ -2971,11 +2981,15 @@
 
   function elReady() { return store.getElOn() && !!store.getElKey() && !!store.getElVoice(); }
 
+  var elWarnAt = 0;
   function elFallback(msg) {
-    if (!elWarned) {
-      elWarned = true;
-      addMsg('sys', 'Premium voice unavailable (' + msg + ') — using the device voice for now.');
-    }
+    // Throttled rather than once-per-session: if she keeps dropping to the device voice
+    // mid-reply the volume visibly jumps, and silence about it looks like a bug.
+    if (elWarned) return;                        // suppressed during a deliberate TEST
+    var now = Date.now();
+    if (now - elWarnAt < 60000) return;
+    elWarnAt = now;
+    addMsg('sys', 'Premium voice dropped out (' + msg + ') — that sentence used the device voice, which sounds different.');
   }
 
   // Speak one line. Resolves { ok, reason } - the reason matters, because "no sound"
@@ -3007,10 +3021,11 @@
     }).then(function (blob) {
       return new Promise(function (resolve) {
         var src = URL.createObjectURL(blob);
+        elKeepSession();                     // a new sentence: cancel any pending release
         elAudio.src = src;
         elAudio.volume = store.getVolume();
         elAudio.playbackRate = Math.min(1.6, Math.max(0.7, store.getRate()));
-        elAudio.onended = function () { URL.revokeObjectURL(src); elRelease(); resolve({ ok: true }); };
+        elAudio.onended = function () { URL.revokeObjectURL(src); elReleaseSoon(); resolve({ ok: true }); };
         elAudio.onerror = function () { URL.revokeObjectURL(src); elRelease(); resolve({ ok: false, reason: 'the audio could not be decoded' }); };
         var pr = elAudio.play();
         if (pr && pr.catch) {
