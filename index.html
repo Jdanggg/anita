@@ -466,6 +466,15 @@
   @media (prefers-reduced-motion: reduce) {
     #orb, .ring.seg, .ring.thin, #vu span { animation: none !important; }
   }
+#attachRow { display:none; gap:8px; padding:6px 14px 0; flex-wrap:wrap; align-items:center }
+#attachRow .attach { position:relative; display:flex; align-items:center; gap:6px;
+  background:var(--surface); border:1px solid var(--edge); border-radius:10px; padding:4px 8px 4px 4px }
+#attachRow .attach img { width:44px; height:44px; object-fit:cover; border-radius:7px; display:block }
+#attachRow .attach span { font-size:11px; color:var(--dim) }
+#attachRow .attach button { background:none; border:none; color:var(--dim); font-size:16px;
+  cursor:pointer; line-height:1; padding:0 2px }
+#attachRow .attach button:hover { color:var(--err) }
+.msg img.shot { max-width:min(320px,70%); border-radius:10px; display:block; margin-bottom:6px }
 
   /* ================= phone ================= */
   @media (max-width: 820px) {
@@ -536,8 +545,11 @@
 
 <div id="chat"></div>
 
+<div id="attachRow"></div>
 <div id="composer">
-  <input id="textIn" type="text" placeholder="Ask anything — or click the sun / press Space to talk…" autocomplete="off">
+  <input id="textIn" type="text" placeholder="Ask anything — or paste a screenshot, or press Space to talk…" autocomplete="off">
+  <input id="fileIn" type="file" accept="image/*" multiple style="display:none">
+  <button class="cbtn" id="clipBtn" title="Attach an image">📎</button>
   <button class="cbtn" id="micBtn" title="Talk (Space)">🎙</button>
   <button class="cbtn" id="stopBtn" title="Stop her talking" style="display:none; color: var(--err); font-size: 16px; padding: 0 14px">⏹</button>
   <button class="cbtn" id="muteBtn" title="Turn off her voice (meetings)">🔈 Voice</button>
@@ -3753,6 +3765,21 @@
   // Telegram's getUpdates is ONE shared queue: if two machines poll it they consume each
   // other's messages. Exactly one instance owns the phone line; the others stay silent
   // and receive work through the fleet bus instead.
+  // Telegram gives a file_id; the bytes need a getFile round-trip and then a download from
+  // the file endpoint, which is a different host path to the bot API.
+  function tgFetchImage(fileId) {
+    var tok = store.getTgTok();
+    return fetch('https://api.telegram.org/bot' + tok + '/getFile?file_id=' + encodeURIComponent(fileId))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok || !j.result || !j.result.file_path) throw new Error('getFile failed');
+        return fetch('https://api.telegram.org/file/bot' + tok + '/' + j.result.file_path);
+      })
+      .then(function (r) { return r.blob(); })
+      .then(function (b) { return blobToImage(b); })
+      .catch(function () { return null; });
+  }
+
   function tgIsOwner() { return store.getTgOwner(); }
   // "Laptop: run the refresh" / "@Laptop run the refresh" -> hand it to that machine.
   function tgRouteIfAddressed(text) {
@@ -3790,15 +3817,31 @@
       .then(function (j) {
         var res = (j && j.result) || [];
         if (!res.length) return;
-        var maxId = 0, lastText = null;
+        var maxId = 0, lastText = null, lastPhoto = null;
         for (var i = 0; i < res.length; i++) {
           var u = res[i];
           if (u.update_id >= maxId) maxId = u.update_id;
           var m = u.message;
-          if (m && m.text && String(m.chat && m.chat.id) === store.getTgChat()) lastText = m.text;
+          if (!m || String(m.chat && m.chat.id) !== store.getTgChat()) continue;
+          if (m.text) { lastText = m.text; lastPhoto = null; }
+          // Photos were being dropped silently - tgPoll only ever looked at m.text, so a
+          // screenshot sent from his phone produced no reply and no error at all.
+          var fid = null;
+          if (m.photo && m.photo.length) fid = m.photo[m.photo.length - 1].file_id;   // largest
+          else if (m.document && /^image\//.test(m.document.mime_type || '')) fid = m.document.file_id;
+          if (fid) { lastPhoto = fid; lastText = m.caption || ''; }
         }
         localStorage.setItem(offKey, String(maxId + 1));
-        if (firstRun || lastText === null || busy) return;   // first run just syncs the offset
+        if (firstRun || busy) return;                        // first run just syncs the offset
+        if (lastPhoto) {
+          addMsg('sys', '\uD83D\uDCF7 photo from your phone');
+          tgFetchImage(lastPhoto).then(function (im) {
+            if (!im) { sendTelegram('I could not download that image.'); return; }
+            sendToClaude(lastText || 'Have a look at this.', { viaTelegram: true, images: [im] });
+          });
+          return;
+        }
+        if (lastText === null) return;
         tgRouteIfAddressed(lastText).then(function (routed) {
           if (routed) return;                                // handed to another machine
           addMsg('sys', '📱 message from your phone');
@@ -4006,6 +4049,103 @@
     if (i > 0 && i < history.length) history = history.slice(i);
   }
 
+  // ---------- images: paste, drop, pick, or arrive by Telegram ----------
+  // 1568px is the long edge the model actually works at; a 4K screenshot just spends tokens
+  // on detail that gets discarded.
+  var MAX_EDGE = 1568;
+  var pendingImages = [];
+
+  function downscaleImage(img) {
+    var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    var scale = Math.min(1, MAX_EDGE / Math.max(w, h));
+    var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+    var c = document.createElement('canvas');
+    c.width = cw; c.height = ch;
+    c.getContext('2d').drawImage(img, 0, 0, cw, ch);
+    // Screenshots are mostly small text and JPEG smears it, so keep PNG where it fits.
+    var url = c.toDataURL('image/png'), mt = 'image/png';
+    if (url.length > 1600000) { url = c.toDataURL('image/jpeg', 0.9); mt = 'image/jpeg'; }
+    return { media_type: mt, data: url.split(',')[1], thumb: url, w: cw, h: ch };
+  }
+
+  function blobToImage(blob) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onerror = function () { reject(new Error('could not read that file')); };
+      fr.onload = function () {
+        var img = new Image();
+        img.onerror = function () { reject(new Error('that does not look like an image')); };
+        img.onload = function () { resolve(downscaleImage(img)); };
+        img.src = fr.result;
+      };
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  function renderAttachments() {
+    var row = $('attachRow');
+    if (!row) return;
+    row.innerHTML = '';
+    row.style.display = pendingImages.length ? 'flex' : 'none';
+    pendingImages.forEach(function (im, i) {
+      var chip = document.createElement('div');
+      chip.className = 'attach';
+      var t = document.createElement('img');
+      t.src = im.thumb;
+      chip.appendChild(t);
+      var x = document.createElement('button');
+      x.type = 'button';
+      x.textContent = '\u00d7';
+      x.title = 'Remove';
+      x.onclick = function () { pendingImages.splice(i, 1); renderAttachments(); };
+      chip.appendChild(x);
+      var d = document.createElement('span');
+      d.textContent = im.w + '\u00d7' + im.h;
+      chip.appendChild(d);
+      row.appendChild(chip);
+    });
+  }
+
+  function attachBlob(blob) {
+    if (pendingImages.length >= 5) {
+      addMsg('sys', 'Five images is the most I will send at once \u2014 remove one first.');
+      return Promise.resolve();
+    }
+    return blobToImage(blob).then(function (im) {
+      pendingImages.push(im);
+      renderAttachments();
+    }).catch(function (e) {
+      addMsg('sys', 'Could not attach that: ' + e.message);
+    });
+  }
+
+  function takePending() {
+    var imgs = pendingImages.slice();
+    pendingImages = [];
+    renderAttachments();
+    return imgs;
+  }
+
+  // Show what she was given, so the transcript is not a mystery later.
+  function addImageMsg(role, images, text) {
+    var el = document.createElement('div');
+    el.className = 'msg ' + role;
+    images.forEach(function (im) {
+      var t = document.createElement('img');
+      t.src = im.thumb || ('data:' + im.media_type + ';base64,' + im.data);
+      t.className = 'shot';
+      el.appendChild(t);
+    });
+    if (text) {
+      var p = document.createElement('div');
+      p.textContent = text;
+      el.appendChild(p);
+    }
+    chat.appendChild(el);
+    chat.scrollTop = chat.scrollHeight;
+    return el;
+  }
+
   async function sendToClaude(userText, opts) {
     opts = opts || {};
     if (!effectiveKey()) {
@@ -4018,11 +4158,24 @@
     muteTurn = false;                   // new turn: voice back on after a ⏹
     stopListening();
     wakeStop();
+    // Anything attached in the composer rides along unless the caller supplied its own.
+    var images = opts.images || (opts.hidden ? [] : takePending());
     if (!opts.hidden) {
-      addMsg('user', userText);
-      transcriptPush('user', userText);
+      if (images.length) addImageMsg('user', images, userText);
+      else addMsg('user', userText);
+      transcriptPush('user', (images.length ? '[' + images.length + ' image] ' : '') + userText);
     }
-    history.push({ role: 'user', content: userText });
+    if (images.length) {
+      // Image blocks first, then the text - the model reads them in order and the question
+      // makes more sense once it has seen what he is asking about.
+      var parts = images.map(function (im) {
+        return { type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } };
+      });
+      parts.push({ type: 'text', text: userText || 'Have a look at this.' });
+      history.push({ role: 'user', content: parts });
+    } else {
+      history.push({ role: 'user', content: userText });
+    }
     trimHistory();
     var allText = '';
 
@@ -4159,7 +4312,8 @@
   };
 
   textIn.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && textIn.value.replace(/\s/g, '')) {
+    // An attachment on its own is a perfectly good message - don't require typing something.
+    if (e.key === 'Enter' && (textIn.value.replace(/\s/g, '') || pendingImages.length)) {
       var t = textIn.value.trim();
       textIn.value = '';
       stopSpeaking();
@@ -4167,6 +4321,41 @@
       sendToClaude(t);
     }
   });
+
+  // Paste an image anywhere in the window. Checked before the text path so a screenshot on
+  // the clipboard is not swallowed as empty text.
+  document.addEventListener('paste', function (e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    var got = false;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === 'file' && /^image\//.test(items[i].type)) {
+        var f = items[i].getAsFile();
+        if (f) { attachBlob(f); got = true; }
+      }
+    }
+    if (got) e.preventDefault();
+  });
+
+  // Drag a file onto the window.
+  ['dragover', 'drop'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) {
+      if (ev === 'dragover') { e.preventDefault(); return; }
+      e.preventDefault();
+      var fs = (e.dataTransfer && e.dataTransfer.files) || [];
+      for (var i = 0; i < fs.length; i++) {
+        if (/^image\//.test(fs[i].type)) attachBlob(fs[i]);
+      }
+    });
+  });
+
+  if ($('clipBtn') && $('fileIn')) {
+    $('clipBtn').onclick = function () { $('fileIn').click(); };
+    $('fileIn').onchange = function (e) {
+      var fs = e.target.files || [];
+      for (var i = 0; i < fs.length; i++) attachBlob(fs[i]);
+      e.target.value = '';
+    };
+  }
   document.addEventListener('keydown', function (e) {
     var tag = (document.activeElement && document.activeElement.tagName) || '';
     if (e.code === 'Space' && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT' && !e.repeat) {
