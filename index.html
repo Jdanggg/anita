@@ -650,7 +650,17 @@
     <label class="chk" style="margin-top:7px"><input type="checkbox" id="autoStartChk"> start Anita with Windows</label>
     <div class="voicerow" style="margin-top:10px; align-items:center">
       <input type="time" id="briefTime" style="flex:0 0 110px; background:var(--surface); border:1px solid var(--edge); border-radius:10px; color:var(--ink); padding:8px 10px; font-family:inherit">
+      <button class="cbtn" id="briefNow" type="button" style="flex:0 0 auto; padding:0 14px">SEND NOW</button>
       <span class="hint" style="margin:0">daily spoken briefing at this time (blank = off; also texted if Telegram is on)</span>
+    </div>
+    <label class="chk" style="margin-top:8px"><input type="checkbox" id="briefVoiceChk" checked> send the briefing as an <b>audio file</b> in her voice</label>
+    <div class="hint" style="margin-top:4px">It includes The Grunt's end-of-day report: what was completed, what failed, and the highest-priority items still in the backlog.</div>
+  </div>
+  <div class="field">
+    <label>Grunt day close</label>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+      <input type="time" id="dayCloseTime" style="flex:0 0 110px; background:var(--surface); border:1px solid var(--edge); border-radius:10px; color:var(--ink); padding:8px 10px; font-family:inherit">
+      <span class="hint" style="margin:0">at this time The Grunt writes the day's report and refreshes its handoff package (blank = off)</span>
     </div>
   </div>
   <div class="field">
@@ -843,7 +853,11 @@
     getRecap: function () { return localStorage.getItem('friday_recap') || ''; },
     setRecap: function (v) { localStorage.setItem('friday_recap', v); },
     getRecapVoice: function () { return localStorage.getItem('friday_recap_voice') !== '0'; },
-    setRecapVoice: function (v) { localStorage.setItem('friday_recap_voice', v ? '1' : '0'); }
+    setRecapVoice: function (v) { localStorage.setItem('friday_recap_voice', v ? '1' : '0'); },
+    getBriefVoice: function () { return localStorage.getItem('friday_brief_voice') !== '0'; },
+    setBriefVoice: function (v) { localStorage.setItem('friday_brief_voice', v ? '1' : '0'); },
+    getDayClose: function () { return localStorage.getItem('friday_dayclose') || ''; },
+    setDayClose: function (v) { localStorage.setItem('friday_dayclose', v); }
   };
 
   // ---- file-backed settings (desktop) ----------------------------------------
@@ -1012,6 +1026,58 @@
       }
       return { label: b.label, body: lines.join('\n') };
     });
+  }
+
+  // The Grunt's end-of-day report: what finished, what broke, what is still owed. Written by
+  // scripts/day-close.ps1 on a schedule, so it is already on disk before the morning briefing
+  // runs and the briefing never has to wait on an agent session being alive.
+  function fetchDayReport() {
+    if (!DESKTOP) return Promise.resolve(null);        // the phone cannot reach the launcher
+    return fetch('/agent-report', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { return (j && j.date) ? j : null; })
+      .catch(function () { return null; });
+  }
+
+  // Flatten it into plain prose. She is told to work only from this, so anything missing here
+  // is something she must not claim.
+  function describeDayReport(rep) {
+    if (!rep) return '';
+    var out = ['The Grunt\'s report for ' + rep.date + ':'];
+    if (rep.completed && rep.completed.length) {
+      out.push('Completed: ' + rep.completed.map(function (r) {
+        return r.workflow + ' on ' + (r.target || 'no target named') +
+               (r.durationMin ? ', ' + r.durationMin + ' minutes' : '') +
+               (r.summary ? '. ' + r.summary : '');
+      }).join(' | '));
+    } else {
+      out.push('Completed: nothing finished that day.');
+    }
+    if (rep.problems && rep.problems.length) {
+      out.push('Did not go through: ' + rep.problems.map(function (r) {
+        return r.workflow + ' on ' + (r.target || 'no target named') + ' - ' + r.status +
+               (r.summary ? '. ' + r.summary : '');
+      }).join(' | '));
+    }
+    if (rep.neverFinished && rep.neverFinished.length) {
+      out.push('Never finished (still flagged running): ' + rep.neverFinished.map(function (r) {
+        return r.runId;
+      }).join(', '));
+    }
+    if (rep.backlogOpen && rep.backlogOpen.length) {
+      var p1 = rep.backlogOpen.filter(function (b) { return b.priority === 'P1'; });
+      var rest = rep.backlogOpen.filter(function (b) { return b.priority !== 'P1'; });
+      if (p1.length) {
+        out.push('Backlog, highest priority: ' + p1.map(function (b) {
+          return b.text + (b.blocked ? ' (blocked: ' + b.blocked + ')' : '');
+        }).join(' | '));
+      }
+      out.push('Rest of the backlog: ' + rest.length + ' item(s)' +
+               (rest.length ? ' - ' + rest.map(function (b) { return b.priority + ' ' + b.text; }).join(' | ') : '') + '.');
+    } else {
+      out.push('Backlog: nothing open.');
+    }
+    return out.join('\n');
   }
 
   function runRecap() {
@@ -3620,10 +3686,39 @@
     var today = now.toDateString();
     if (hhmm === at && localStorage.getItem('friday_brief_last') !== today) {
       localStorage.setItem('friday_brief_last', today);
-      addMsg('sys', '☀ scheduled briefing');
-      sendToClaude('Give me my daily briefing.', { viaTelegram: tgReady() });
+      runBriefing();
     }
   }, 25000);
+
+  // The morning briefing now carries The Grunt's day-close report - what got completed and
+  // what is still owed - and is delivered by voice so he can listen instead of read.
+  function runBriefing() {
+    return fetchDayReport().then(function (rep) {
+      var facts = describeDayReport(rep);
+      var prompt = 'Give me my daily briefing.';
+      if (facts) {
+        prompt += '\n\nWork out of the VDI, from the end-of-day report:\n' + facts +
+                  '\n\nOpen with the day, weather and anything on my calendar, then cover that ' +
+                  'report: what got finished, anything that failed or was left hanging, and the ' +
+                  'highest-priority things still outstanding. Do not read the whole backlog out ' +
+                  'item by item - give the P1s and say how many others there are. Stick strictly ' +
+                  'to the report above and invent nothing.';
+      } else {
+        prompt += '\n\nThere is no end-of-day report from The Grunt, so say briefly that there ' +
+                  'is nothing logged from the VDI rather than guessing at what happened.';
+      }
+      prompt += ' It will be read aloud, so write plain spoken sentences: no markdown, no bullet ' +
+                'points, no headings, no emoji.';
+      addMsg('sys', '\u2600 scheduled briefing');
+      return sendToClaude(prompt, {
+        hidden: true,
+        viaTelegram: tgReady(),
+        asVoice: store.getBriefVoice()
+      });
+    });
+  }
+  window.ANITA = window.ANITA || {};
+  window.ANITA.briefing = runBriefing;
 
   // ---------- daily recap scheduler ----------
   // Its own interval rather than sharing the briefing's: the briefing bails early when it is
@@ -4087,6 +4182,8 @@
     store.setBrief($('briefTime').value || '');
     if ($('recapTime')) store.setRecap($('recapTime').value || '');
     if ($('recapVoiceChk')) store.setRecapVoice($('recapVoiceChk').checked);
+    if ($('briefVoiceChk')) store.setBriefVoice($('briefVoiceChk').checked);
+    if ($('dayCloseTime')) store.setDayClose($('dayCloseTime').value || '');
     if (DESKTOP && $('autoStartChk')) {
       sysCall({ action: 'autostart', enable: $('autoStartChk').checked }).then(function (r) { addMsg('sys', r); });
     }
@@ -4137,6 +4234,14 @@
   if ($('briefTime')) $('briefTime').value = store.getBrief();
   if ($('recapTime')) $('recapTime').value = store.getRecap();
   if ($('recapVoiceChk')) $('recapVoiceChk').checked = store.getRecapVoice();
+  if ($('briefVoiceChk')) $('briefVoiceChk').checked = store.getBriefVoice();
+  if ($('dayCloseTime')) $('dayCloseTime').value = store.getDayClose();
+  if ($('briefNow')) $('briefNow').onclick = function () {
+    var b = $('briefNow');
+    b.disabled = true; b.textContent = 'building...';
+    runBriefing().then(function () { b.disabled = false; b.textContent = 'SEND NOW'; })
+                 .catch(function () { b.disabled = false; b.textContent = 'SEND NOW'; });
+  };
   if ($('recapNow')) $('recapNow').onclick = function () {
     var b = $('recapNow');
     b.disabled = true;
