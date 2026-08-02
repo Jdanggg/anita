@@ -1097,6 +1097,39 @@
     return out.join('\n');
   }
 
+  function execMail(input) {
+    if (!DESKTOP) {
+      return Promise.resolve('His mailbox is read through Outlook on the PC, which the phone cannot reach. Ask on a PC.');
+    }
+    return fetch('/mail', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input || { action: 'unread' })
+    }).then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j) return 'No answer from Outlook.';
+        if (j.error) return j.error;
+        if (j.folders) {
+          return 'Folders: ' + j.folders.map(function (f) {
+            return f.name + ' (' + f.items + ' items, ' + f.unread + ' unread)';
+          }).join('; ');
+        }
+        if (j.message) {
+          var m = j.message;
+          return 'From ' + m.from + ' <' + m.fromAddr + '> on ' + m.received +
+                 '\nSubject: ' + m.subject + '\n\n' + m.body;
+        }
+        if (!j.messages || !j.messages.length) return 'Nothing matched in ' + (j.folder || 'that folder') + '.';
+        return j.count + ' message(s) in ' + j.folder + ':\n' + j.messages.map(function (m) {
+          return '- [' + m.id + '] ' + (m.unread ? '(unread) ' : '') + m.from + ' - "' + m.subject + '"' +
+                 (m.received ? ' on ' + m.received.slice(0, 16).replace('T', ' ') : '') +
+                 (m.hasFiles ? ' [has attachments]' : '') +
+                 '\n    ' + (m.body || '').replace(/\s+/g, ' ').slice(0, 300);
+        }).join('\n');
+      })
+      .catch(function (e) { return 'Could not reach Outlook: ' + e.message; });
+  }
+
   function execUsage(input) {
     if (!DESKTOP) {
       return Promise.resolve('Usage figures come from the launcher, which the phone cannot reach. Ask on a PC.');
@@ -2809,6 +2842,17 @@
           in_minutes: { type: 'number' },
           at: { type: 'string' }
         }, required: ['action'] } },
+      { name: 'mail',
+        description: "Read Johnny's Outlook mailbox (read-only; you cannot delete, move or send from here - use send_email for sending). action='unread' for what he has not read, 'search' to find messages by words in the subject, body or sender, 'read' for the full text of one message using an id from a previous result, 'folders' to list folders with their counts. Optional: folder (default Inbox - try Sent Items, Archive, Junk Email), days to limit how far back, from to filter by sender name, limit (default 15, max 50). Results give a 400-character preview; call 'read' with the id when you need the whole thing.",
+        input_schema: { type: 'object', properties: {
+          action: { type: 'string', enum: ['unread', 'search', 'read', 'folders'] },
+          query:  { type: 'string' },
+          folder: { type: 'string' },
+          from:   { type: 'string' },
+          days:   { type: 'number' },
+          limit:  { type: 'number' },
+          id:     { type: 'string' }
+        }, required: ['action'] } },
       { name: 'usage',
         description: "Johnny's consumption. action='report' (default) gives Claude Code tokens by model over the last 5 hours / today / this plan week, how many times he was rate-limited, his ElevenLabs quota, and a CALIBRATED ESTIMATE of the plan bars if he has given readings. action='calibrate' records what a plan bar actually says - use it whenever he tells you a percentage he can see on screen, e.g. 'weekly is at 76%' -> bar='thisWeek', percent=76. Each reading makes the estimate better, so if he asks how close he is and there are no readings yet, ask him to read the bar to you once.",
         input_schema: { type: 'object', properties: {
@@ -3099,6 +3143,7 @@
       if (name === 'weather') return execWeather(input);
       if (name === 'timer') return execTimer(input);
       if (name === 'reminders') return execReminders(input);
+      if (name === 'mail') return execMail(input);
       if (name === 'usage') return execUsage(input);
       if (name === 'send_briefing') return execSendBriefing(input);
       if (name === 'notes') return execNotes(input);
