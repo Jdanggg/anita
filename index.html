@@ -1044,6 +1044,13 @@
                ' read from cache' + (per ? '. By model: ' + per : '') + '.' +
                (w.throttled ? ' He was rate-limited ' + w.throttled + ' time(s) in this window.' : ''));
     }
+    var a = u.anthropicSpend;
+    if (a && !a.error && typeof a.total === 'number') {
+      out.push('Anthropic API spend, last 7 days: $' + a.total.toFixed(2) + ' USD. This is REAL billed ' +
+               'money from his organisation cost report, not an estimate - unlike the plan percentages.');
+    } else if (a && a.error) {
+      out.push('Anthropic API spend could not be read: ' + a.error + '.');
+    }
     var e = u.elevenLabs;
     if (e && !e.error && e.limit) {
       out.push('ElevenLabs: ' + e.used + ' of ' + e.limit + ' characters used (' + e.percent + '%)' +
