@@ -1477,10 +1477,25 @@
   }
 
   var TG_CAPTION_MAX = 1000;             // Telegram's limit is 1024; leave room
-  function tgUpload(method, field, blob, caption) {
+
+  // Telegram draws the round voice-note bubble ONLY for OGG/Opus. ElevenLabs cannot make it
+  // and a browser cannot encode, so the launcher does it with ffmpeg. Everything about this
+  // is optional: any failure returns null and the caller sends the MP3 as before.
+  function toOpus(blob) {
+    if (!DESKTOP) return Promise.resolve(null);
+    return fetch('/to-opus', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: blob
+    }).then(function (r) { return r.ok ? r.blob() : null; })
+      .then(function (b) { return (b && b.size > 512) ? b : null; })
+      .catch(function () { return null; });
+  }
+
+  function tgUpload(method, field, blob, caption, filename) {
     var fd = new FormData();
     fd.append('chat_id', store.getTgChat());
-    fd.append(field, blob, 'anita.mp3');
+    fd.append(field, blob, filename || 'anita.mp3');
     // Only caption it if the whole thing fits. A caption cut off mid-sentence reads as a bug,
     // so longer text is sent as its own message by the caller instead.
     if (caption && caption.length <= TG_CAPTION_MAX) fd.append('caption', caption);
@@ -1502,11 +1517,23 @@
       return elFetchAudio(text).then(function (blob) {
         if (!blob) return long ? 'Sent as text (voice unavailable).' : sendTelegram(text);
         var cap = long ? '' : text;
-        return tgUpload('sendVoice', 'voice', blob, cap).then(function (ok) {
-          if (ok) return 'Voice note sent.';
-          return tgUpload('sendAudio', 'audio', blob, cap).then(function (ok2) {
-            if (ok2) return 'Sent as an audio message.';
-            return long ? 'Sent as text (audio upload refused).' : sendTelegram(text);
+        // Try for a real voice note first; fall back through audio, then text.
+        return toOpus(blob).then(function (ogg) {
+          if (ogg) {
+            return tgUpload('sendVoice', 'voice', ogg, cap, 'anita.ogg').then(function (ok) {
+              if (ok) return 'Voice note sent.';
+              return null;   // fall through to the mp3 path below
+            });
+          }
+          return null;
+        }).then(function (done) {
+          if (done) return done;
+          return tgUpload('sendVoice', 'voice', blob, cap).then(function (ok) {
+            if (ok) return 'Voice note sent.';
+            return tgUpload('sendAudio', 'audio', blob, cap).then(function (ok2) {
+              if (ok2) return 'Sent as an audio message.';
+              return long ? 'Sent as text (audio upload refused).' : sendTelegram(text);
+            });
           });
         });
       });
