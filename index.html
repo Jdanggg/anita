@@ -3334,21 +3334,42 @@
     }).then(function (r) { return r.text(); })
       .catch(function (e) { return 'Could not reach the device board: ' + e; });
   }
-  // Tasks handed to THIS machine by another instance: speak them, then act on them.
+  // Fleet traffic for THIS machine. Two kinds:
+  //   task  - an instruction from another instance: act on it, and send the answer BACK.
+  //           Before 2026-08-03 nothing returned - the portable answered into its own window
+  //           and Johnny, sitting at the machine he asked from, saw silence.
+  //   reply - another machine's answer to something routed from here: display it, speak it,
+  //           text it if this machine holds the Telegram line. NEVER sent to Claude - that
+  //           would be two Anitas talking to each other on his phone bill.
+  // A real backlog, drained one per tick: the inbox endpoint consumes messages on read, and
+  // the old code acted on items[0] while printing the rest as "queued" - they were lost.
+  var fleetTaskBacklog = [];
   if (DESKTOP) {
     setInterval(function () {
-      if (busy || speaking || listening) return;   // don't cut across a live conversation
       fetch('/device-inbox', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (inb) {
           var items = (inb && inb.items) || [];
-          if (!items.length) return;
-          var it = items[0];                        // one per tick, in order
-          var from = it.fromNick || it.from || 'another machine';
-          addMsg('sys', '\uD83D\uDCE8 From ' + from + ': ' + it.text);
-          enqueueSpeech('Message from ' + from + '.');
-          sendToClaude(it.text + '\n\n[This instruction was handed to this machine by ' + from + '.]', { hidden: true });
-          for (var i = 1; i < items.length; i++) addMsg('sys', '\uD83D\uDCE8 Queued from ' + from + ': ' + items[i].text);
+          for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            var from = it.fromNick || it.from || 'another machine';
+            if (it.kind === 'reply') {
+              addMsg('assistant', '[' + from + '] ' + it.text);
+              transcriptPush('assistant', '[' + from + '] ' + it.text);
+              enqueueSpeech(from + ' says: ' + it.text);
+              if (tgReady()) sendTelegram('[' + from + '] ' + it.text);
+            } else {
+              fleetTaskBacklog.push(it);
+            }
+          }
+          if (!fleetTaskBacklog.length) return;
+          if (busy || speaking || listening) return;   // don't cut across a live conversation
+          var task = fleetTaskBacklog.shift();
+          var tfrom = task.fromNick || task.from || 'another machine';
+          addMsg('sys', '\uD83D\uDCE8 From ' + tfrom + ': ' + task.text);
+          enqueueSpeech('Message from ' + tfrom + '.');
+          sendToClaude(task.text + '\n\n[This instruction was handed to this machine by ' + tfrom + '. Your reply will be relayed back to them.]',
+                       { hidden: true, fleetReplyTo: task.from });
         })
         .catch(function () {});
     }, 20000);
@@ -4660,6 +4681,14 @@
       closeBubble();
       if (opts.viaTelegram && allText && tgReady()) {
         if (opts.asVoice) sendVoiceNote(allText); else tgDeliver(allText);
+      }
+      // The return leg of a fleet task: her answer goes back to the machine that asked.
+      if (opts.fleetReplyTo && allText) {
+        fetch('/device-send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: opts.fleetReplyTo, text: allText, kind: 'reply' })
+        }).catch(function () {});
       }
     } catch (err) {
       if (el && el.parentNode) el.parentNode.removeChild(el);
