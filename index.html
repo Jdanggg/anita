@@ -927,10 +927,16 @@
   var orbWrap = $('orbWrap'), statusEl = $('status'), chat = $('chat');
   var textIn = $('textIn'), micBtn = $('micBtn'), autoBtn = $('autoBtn');
 
+  // Model output can carry citation markup (<cite index="...">...</cite>); rendered raw it
+  // reads as debris and gets spoken as debris. Strip it wherever text becomes visible/audible.
+  function stripCites(t) {
+    return String(t).replace(/<\/?cite[^>]*>/g, '');
+  }
+
   function addMsg(role, text) {
     var el = document.createElement('div');
     el.className = 'msg ' + role;
-    el.textContent = text;
+    el.textContent = stripCites(text);
     chat.appendChild(el);
     chat.scrollTop = chat.scrollHeight;
     return el;
@@ -3234,7 +3240,7 @@
       });
       tools.push({
         name: 'pbi_work',
-        description: 'Queue Power BI work for the VDI agent, which drives Power BI Desktop inside the Omnissa Horizon virtual desktop. action=start queues a workflow (horizon-connect = open the Horizon client and get signed in to the VDI; pbi-refresh-verify = refresh and check the tie-out; pbi-apply-tmdl = apply a prepared model change; pbi-publish = publish to the report server; pbi-qa-sweep = visual QA pass). action=status reports what is queued, the most recent finished run, and the agent\'s progress notes. action=artifacts opens that run\'s screenshot folder on the user\'s PC so they can look at the evidence. action=attach sends the user\'s currently-shared screen to the agent\'s inbox (screen sharing must be on) — use it when the user wants the agent to see what they are looking at. Runs take a long time (a refresh is about 27 minutes) — queue it, tell the user it is queued, and let them get on with their day; they will be told when it finishes.',
+        description: 'Queue Power BI work for the VDI agent, which drives Power BI Desktop inside the Omnissa Horizon virtual desktop. action=start queues a workflow (horizon-connect = open the Horizon client and get signed in to the VDI; pbi-refresh-verify = refresh and check the tie-out; pbi-apply-tmdl = apply a prepared model change; pbi-publish = publish to the report server; pbi-qa-sweep = visual QA pass). action=status reports what is queued, the most recent finished run, the agent\'s progress notes, and the OPEN BACKLOG with priorities (backlogOpen) - use it when he asks what is outstanding or what the backlog looks like. action=artifacts opens that run\'s screenshot folder on the user\'s PC so they can look at the evidence. action=attach sends the user\'s currently-shared screen to the agent\'s inbox (screen sharing must be on) — use it when the user wants the agent to see what they are looking at. Runs take a long time (a refresh is about 27 minutes) — queue it, tell the user it is queued, and let them get on with their day; they will be told when it finishes.',
         input_schema: { type: 'object', properties: {
           action: { type: 'string', enum: ['start', 'status', 'artifacts', 'attach'] },
           workflow: { type: 'string', enum: ['horizon-connect', 'pbi-refresh-verify', 'pbi-apply-tmdl', 'pbi-publish', 'pbi-qa-sweep'], description: 'Which workflow to run (action=start)' },
@@ -3747,6 +3753,7 @@
     if ($('stopBtn')) $('stopBtn').style.display = speaking ? '' : 'none';
   }
   function enqueueSpeech(text) {
+    text = stripCites(text);
     if (store.getMute()) return;        // meeting mode: she types, she does not talk
     if (muteTurn) return;               // user pressed ⏹ — stay quiet until the next turn
     var t = cleanForSpeech(text);
@@ -5067,7 +5074,10 @@
     store.setBrief($('briefTime').value || '');
     if ($('briefVoiceChk')) store.setBriefVoice($('briefVoiceChk').checked);
     if ($('tgVoiceChk')) store.setTgVoice($('tgVoiceChk').checked);
-    if (DESKTOP && $('autoStartChk')) {
+    // Only act when it CHANGED. Sending the checkbox state on every save is what deleted the
+    // shortcut: the box always rendered unchecked, so every save meant "turn it off".
+    if (DESKTOP && $('autoStartChk') && $('autoStartChk').checked !== autoStartWas) {
+      autoStartWas = $('autoStartChk').checked;
       sysCall({ action: 'autostart', enable: $('autoStartChk').checked }).then(function (r) { addMsg('sys', r); });
     }
     if (store.getWake()) wakeStart(); else wakeStop();
@@ -5114,6 +5124,22 @@
   if ($('tgOwnerChk')) $('tgOwnerChk').checked = store.getTgOwner();
   if ($('wakeChk')) $('wakeChk').checked = store.getWake();
   updWakeBtn();
+  // Ask the launcher whether the Startup shortcut actually exists, rather than trusting a
+  // mirrored setting. A shortcut left over from the FRIDAY rename points at a path that is
+  // gone - present but dead - and the launcher reports that as off, which it is.
+  var autoStartWas = false;
+  if (DESKTOP && $('autoStartChk')) {
+    sysCall({ action: 'autostart_status' }).then(function (r) {
+      try {
+        var st = JSON.parse(r);
+        autoStartWas = !!st.enabled;
+        $('autoStartChk').checked = autoStartWas;
+        if (st.shortcut && !st.enabled) {
+          addMsg('sys', 'The start-with-Windows shortcut points at something that no longer exists — tick the box again to repoint it.');
+        }
+      } catch (e) {}
+    });
+  }
   if ($('briefTime')) $('briefTime').value = store.getBrief();
   if ($('tgVoiceChk')) $('tgVoiceChk').checked = store.getTgVoice();
   if ($('briefVoiceChk')) $('briefVoiceChk').checked = store.getBriefVoice();
