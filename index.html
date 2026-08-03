@@ -3240,9 +3240,9 @@
       });
       tools.push({
         name: 'pbi_work',
-        description: 'Queue Power BI work for the VDI agent, which drives Power BI Desktop inside the Omnissa Horizon virtual desktop. action=start queues a workflow (horizon-connect = open the Horizon client and get signed in to the VDI; pbi-refresh-verify = refresh and check the tie-out; pbi-apply-tmdl = apply a prepared model change; pbi-publish = publish to the report server; pbi-qa-sweep = visual QA pass). action=status reports what is queued, the most recent finished run, the agent\'s progress notes, and the OPEN BACKLOG with priorities (backlogOpen) - use it when he asks what is outstanding or what the backlog looks like. action=artifacts opens that run\'s screenshot folder on the user\'s PC so they can look at the evidence. action=attach sends the user\'s currently-shared screen to the agent\'s inbox (screen sharing must be on) — use it when the user wants the agent to see what they are looking at. Runs take a long time (a refresh is about 27 minutes) — queue it, say it is QUEUED (not running - a worker must pick it up), and let them get on with their day; they will be told when it finishes. If the user does not name an exact pbix file, leave target empty and put his wording in notes - the Grunt resolves the correct file from the PSE context, and guessing a version number risks refreshing the wrong model.',
+        description: 'Queue Power BI work for the VDI agent, which drives Power BI Desktop inside the Omnissa Horizon virtual desktop. action=start queues a workflow (horizon-connect = open the Horizon client and get signed in to the VDI; pbi-refresh-verify = refresh and check the tie-out; pbi-apply-tmdl = apply a prepared model change; pbi-publish = publish to the report server; pbi-qa-sweep = visual QA pass). action=status reports what is queued, the most recent finished run, the agent\'s progress notes, and the OPEN BACKLOG with priorities (backlogOpen) - use it when he asks what is outstanding or what the backlog looks like. action=artifacts opens that run\'s screenshot folder on the user\'s PC so they can look at the evidence. action=attach sends the user\'s currently-shared screen to the agent\'s inbox (screen sharing must be on) — use it when the user wants the agent to see what they are looking at. action=message (with notes as the text) sends a DIRECT MESSAGE to the live Grunt session - a question or instruction outside a workflow: what state is the work in, write the handoff note yourself, skip that step. The Grunt answers through your announcements. Prefer asking the GRUNT over asking Johnny for anything about the state of work on the VDI - it can see the screen and he cannot. Runs take a long time (a refresh is about 27 minutes) — queue it, say it is QUEUED (not running - a worker must pick it up), and let them get on with their day; they will be told when it finishes. If the user does not name an exact pbix file, leave target empty and put his wording in notes - the Grunt resolves the correct file from the PSE context, and guessing a version number risks refreshing the wrong model.',
         input_schema: { type: 'object', properties: {
-          action: { type: 'string', enum: ['start', 'status', 'artifacts', 'attach'] },
+          action: { type: 'string', enum: ['start', 'status', 'artifacts', 'attach', 'message'] },
           workflow: { type: 'string', enum: ['horizon-connect', 'pbi-refresh-verify', 'pbi-apply-tmdl', 'pbi-publish', 'pbi-qa-sweep'], description: 'Which workflow to run (action=start)' },
           target: { type: 'string', description: 'The PBIX or scope, e.g. "Cost_Report_V9.pbix" (action=start)' },
           notes: { type: 'string', description: 'Anything the agent should know, in the user\'s words' }
@@ -3406,6 +3406,16 @@
         }
         return parts.join(' ');
       }).catch(function (e) { return 'Could not reach the agent bridge: ' + e; });
+    }
+    if (action === 'message') {
+      var txt = String(input.notes || input.target || '');
+      if (!txt) return Promise.resolve('What should I tell the Grunt?');
+      return fetch('/agent-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: txt })
+      }).then(function (r) { return r.text(); })
+        .catch(function (e) { return 'Could not reach the agent bridge: ' + e; });
     }
     if (action === 'artifacts') {
       return fetch('/agent', {
