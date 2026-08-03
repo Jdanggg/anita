@@ -3240,7 +3240,7 @@
       });
       tools.push({
         name: 'pbi_work',
-        description: 'Queue Power BI work for the VDI agent, which drives Power BI Desktop inside the Omnissa Horizon virtual desktop. action=start queues a workflow (horizon-connect = open the Horizon client and get signed in to the VDI; pbi-refresh-verify = refresh and check the tie-out; pbi-apply-tmdl = apply a prepared model change; pbi-publish = publish to the report server; pbi-qa-sweep = visual QA pass). action=status reports what is queued, the most recent finished run, the agent\'s progress notes, and the OPEN BACKLOG with priorities (backlogOpen) - use it when he asks what is outstanding or what the backlog looks like. action=artifacts opens that run\'s screenshot folder on the user\'s PC so they can look at the evidence. action=attach sends the user\'s currently-shared screen to the agent\'s inbox (screen sharing must be on) — use it when the user wants the agent to see what they are looking at. Runs take a long time (a refresh is about 27 minutes) — queue it, tell the user it is queued, and let them get on with their day; they will be told when it finishes.',
+        description: 'Queue Power BI work for the VDI agent, which drives Power BI Desktop inside the Omnissa Horizon virtual desktop. action=start queues a workflow (horizon-connect = open the Horizon client and get signed in to the VDI; pbi-refresh-verify = refresh and check the tie-out; pbi-apply-tmdl = apply a prepared model change; pbi-publish = publish to the report server; pbi-qa-sweep = visual QA pass). action=status reports what is queued, the most recent finished run, the agent\'s progress notes, and the OPEN BACKLOG with priorities (backlogOpen) - use it when he asks what is outstanding or what the backlog looks like. action=artifacts opens that run\'s screenshot folder on the user\'s PC so they can look at the evidence. action=attach sends the user\'s currently-shared screen to the agent\'s inbox (screen sharing must be on) — use it when the user wants the agent to see what they are looking at. Runs take a long time (a refresh is about 27 minutes) — queue it, say it is QUEUED (not running - a worker must pick it up), and let them get on with their day; they will be told when it finishes. If the user does not name an exact pbix file, leave target empty and put his wording in notes - the Grunt resolves the correct file from the PSE context, and guessing a version number risks refreshing the wrong model.',
         input_schema: { type: 'object', properties: {
           action: { type: 'string', enum: ['start', 'status', 'artifacts', 'attach'] },
           workflow: { type: 'string', enum: ['horizon-connect', 'pbi-refresh-verify', 'pbi-apply-tmdl', 'pbi-publish', 'pbi-qa-sweep'], description: 'Which workflow to run (action=start)' },
@@ -4889,7 +4889,23 @@
       textIn.value = '';
       stopSpeaking();
       lastInputWasVoice = false;   // typed input: don't re-open the mic afterwards
-      sendToClaude(t);
+      // "JDAnalytics-Portable: run X" typed HERE must reach that machine, exactly as it would
+      // by Telegram. Before this, only texted messages routed - a typed one went to the model,
+      // which queued the work locally ("Shouldn't be running", 2026-08-03). Attachments stay
+      // local: an image cannot ride /device-send.
+      if (DESKTOP && !pendingImages.length) {
+        tgRouteIfAddressed(t).then(function (routed) {
+          if (routed) {
+            addMsg('user', t);
+            transcriptPush('user', t);
+            addMsg('sys', '\u27a1 handed to that machine \u2014 it will report back itself');
+          } else {
+            sendToClaude(t);
+          }
+        });
+      } else {
+        sendToClaude(t);
+      }
     }
   });
 
